@@ -1,0 +1,111 @@
+{
+  "entities": {
+    "Slot": {
+      "title": "Live Streaming Slot",
+      "description": "Represents a dedicated 24/7 cloud live streaming slot instance",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 120 },
+        "status": { "type": "string", "enum": ["active", "expired", "inactive"] },
+        "streamStatus": { "type": "string", "enum": ["Off", "Live", "Scheduled"] },
+        "expireOn": { "type": "string", "maxLength": 64 },
+        "expiresAt": { "type": "number" },
+        "streamKey": { "type": "string", "maxLength": 256 },
+        "platform": { "type": "string", "enum": ["YouTube", "Facebook", "Twitch", "Custom RTMP"] },
+        "streamLoop": { "type": "boolean" },
+        "rtmpServerUrl": { "type": "string", "maxLength": 512 },
+        "scheduleStartEnabled": { "type": "boolean" },
+        "streamStartTime": { "type": "string", "maxLength": 64 },
+        "scheduledStartTimeMs": { "type": "number" },
+        "streamEndTime": { "type": "string", "maxLength": 64 },
+        "videoId": { "type": "string", "maxLength": 128 },
+        "autoStartOnKeyUpdate": { "type": "boolean" },
+        "targetBitrateKbps": { "type": "number" },
+        "fpsPreset": { "type": "number" },
+        "audioBitrateKbps": { "type": "number" },
+        "qualityPresetName": { "type": "string", "maxLength": 64 },
+        "startedAt": { "type": "number" },
+        "liveViewers": { "type": "number" },
+        "bitrate": { "type": "number" },
+        "fps": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "status", "streamStatus", "streamKey", "platform", "streamLoop"]
+    },
+    "VideoItem": {
+      "title": "Cloud Video Item",
+      "description": "Pre-recorded video uploaded to cloud storage for live looping broadcasts",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 200 },
+        "duration": { "type": "string", "maxLength": 32 },
+        "sizeBytes": { "type": "number" },
+        "sizeFormatted": { "type": "string", "maxLength": 32 },
+        "resolution": { "type": "string", "maxLength": 32 },
+        "thumbnailUrl": { "type": "string", "maxLength": 200000 },
+        "videoUrl": { "type": "string", "maxLength": 65536 },
+        "videoPath": { "type": "string", "maxLength": 1024 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "category": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "title", "duration", "sizeBytes", "sizeFormatted", "resolution", "videoUrl"]
+    },
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "User profile preferences, contact and account settings",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 120 },
+        "email": { "type": "string", "maxLength": 128 },
+        "avatarInitials": { "type": "string", "maxLength": 8 },
+        "country": { "type": "string", "maxLength": 64 },
+        "city": { "type": "string", "maxLength": 64 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "phoneCode": { "type": "string", "maxLength": 16 },
+        "theme": { "type": "string", "enum": ["light", "dark"] }
+      },
+      "required": ["id", "name", "email", "theme"]
+    },
+    "OrderRecord": {
+      "title": "Billing Order Record",
+      "description": "Subscription order transaction for live slots",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "slotId": { "type": "string", "maxLength": 128 },
+        "period": { "type": "string", "maxLength": 32 },
+        "count": { "type": "number" },
+        "currency": { "type": "string", "enum": ["INR", "USD"] },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "maxLength": 32 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "period", "count", "currency", "amount"]
+    }
+  },
+  "firestore": {
+    "/slots/{slotId}": {
+      "schema": { "$ref": "#/entities/Slot" },
+      "description": "Live streaming slots created by creators with 24/7 RTMP settings"
+    },
+    "/videos/{videoId}": {
+      "schema": { "$ref": "#/entities/VideoItem" },
+      "description": "Pre-recorded videos stored in the library for broadcast playback"
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User account settings and contact profile details"
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/OrderRecord" },
+      "description": "Billing purchase transactions and slot renewals"
+    }
+  }
+}

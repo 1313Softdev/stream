@@ -1,0 +1,6 @@
+{
+  "name": "StreamAdda - 24x7 Pre-Recorded Video Live Streaming Platform",
+  "description": "StreamAdda clone: 24/7 continuous cloud live streaming platform for pre-recorded videos to YouTube Live and social media with live slots, cloud video storage, billing, and automated loop streaming.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

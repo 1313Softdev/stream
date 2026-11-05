@@ -1,0 +1,43 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Slots collection - allow read by all, allow create, update, delete for signed in creators
+    match /slots/{slotId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    // Videos collection - allow read by all, allow create, update, delete for signed in creators
+    match /videos/{videoId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    // Users collection - allow read and write for signed in user
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    // Orders collection - allow read and write for signed in user
+    match /orders/{orderId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    // Connection tests and collection queries
+    match /{document=**} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+  }
+}

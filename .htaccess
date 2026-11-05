@@ -1,0 +1,31 @@
+# ==============================================================
+# StreamAdda - Hostinger LiteSpeed / Apache Reverse Proxy & Passenger
+# ==============================================================
+
+# 1. If using Hostinger Node.js Application Manager with Passenger:
+# Hostinger hPanel will automatically manage Passenger directives here.
+
+# 2. If using standard Apache / LiteSpeed Reverse Proxy to Node.js port (e.g. 3000):
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # Allow direct access to uploaded files if served via static folder
+  RewriteCond %{REQUEST_URI} ^/uploads/ [NC]
+  RewriteCond %{REQUEST_FILENAME} -f
+  RewriteRule ^ - [L]
+
+  # Route all API and web requests through the Node.js application
+  # If your Node application runs on port 3000, uncomment the proxy rule below:
+  # RewriteRule ^(.*)$ http://127.0.0.1:3000/$1 [P,L]
+</IfModule>
+
+# Security Headers
+<IfModule mod_headers.c>
+  Header set X-Content-Type-Options "nosniff"
+  Header set X-Frame-Options "SAMEORIGIN"
+  Header set X-XSS-Protection "1; mode=block"
+</IfModule>
+
+# Ensure index file fallback
+DirectoryIndex index.html
+

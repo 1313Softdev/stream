@@ -1,0 +1,14 @@
+node_modules/
+build/
+dist/
+dist-server/
+coverage/
+.DS_Store
+*.log
+.env
+.env.hostinger
+.env.production
+env.txt
+!.env.example
+public/uploads/*.mp4
+!public/uploads/.gitkeep

@@ -1,0 +1,846 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect } from 'react';
+import { Slot, VideoItem, UserProfile, BillingPeriod } from './types';
+import { BILLING_PLANS } from './config/billingPlans';
+import { PRESET_SAMPLE_VIDEOS } from './config/presetVideos';
+import { Sidebar, AppView } from './components/Sidebar';
+import { Header } from './components/Header';
+import { DashboardView } from './components/DashboardView';
+import { LiveSlotsView } from './components/LiveSlotsView';
+import { SlotDetailsView } from './components/SlotDetailsView';
+import { VideosView } from './components/VideosView';
+import { BillingView } from './components/BillingView';
+import { ProfileView } from './components/ProfileView';
+import { AdminDashboardView } from './components/AdminDashboardView';
+import { LandingPageView } from './components/LandingPageView';
+import { AuthModal } from './components/AuthModal';
+import { AuthPageView } from './components/AuthPageView';
+import { TutorialModal } from './components/TutorialModal';
+import { ContactModal } from './components/ContactModal';
+import { LiveStreamSimulatorModal } from './components/LiveStreamSimulatorModal';
+import {
+  auth,
+  onAuthStateChanged,
+  signInWithGoogle,
+  logOutUser,
+} from './lib/firebase';
+import {
+  fetchDbStatus,
+  fetchUserProfile,
+  saveUserProfile,
+  fetchSlots,
+  saveSlot,
+  deleteSlot,
+  fetchVideos,
+  saveVideo,
+  deleteVideo,
+  recordOrder,
+  fetchCurrentUser,
+  getStoredAuthToken,
+  logoutUserSession,
+  fetchPublicSettings,
+} from './lib/api';
+import { startCloudStream, stopCloudStream } from './lib/streamingService';
+
+const DEFAULT_USER: UserProfile = {
+  name: 'Streamer',
+  id: 'usr_guest',
+  email: '',
+  avatarInitials: 'S',
+  role: 'user',
+  status: 'active',
+  storageQuotaBytes: 10 * 1024 * 1024 * 1024,
+  country: 'India',
+  city: 'Mohali',
+  phone: '',
+  phoneCode: '+91',
+  theme: 'light',
+};
+
+const DEFAULT_INITIAL_SLOT: Slot = {
+  id: '6ae0fddc4863791bef736a11',
+  name: 'Slot 1793129948103',
+  status: 'active',
+  streamStatus: 'Off',
+  expireOn: '30 Oct 2026 - 04:29 PM',
+  expiresAt: Date.now() + 14 * 3600 * 1000 + 30 * 60 * 1000 + 38 * 1000,
+  streamKey: 'hdef-dcea-vtkm-m7hw-50s0',
+  platform: 'YouTube',
+  streamLoop: true,
+  streamEndTime: 'October 30th, 2026 04:29 PM',
+  videoId: 'vid-lofi-01',
+};
+
+export default function App() {
+  // Page Mode: 'app' (App Console), 'landing' (Public Marketing Website), or 'auth' (Dedicated Auth Page)
+  const [mode, setMode] = useState<'app' | 'landing' | 'auth'>('app');
+
+  // App Console Subview
+  const [currentView, setCurrentView] = useState<AppView>('dashboard');
+
+  // Mobile menu drawer
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Modals & Auth Dialogs
+  const [isTutorialOpen, setIsTutorialOpen] = useState(false);
+  const [isContactOpen, setIsContactOpen] = useState(false);
+  const [isLiveMonitorOpen, setIsLiveMonitorOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
+
+  // MySQL Backend Database & Authentication status
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
+  const [isAuthenticatedGoogle, setIsAuthenticatedGoogle] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    return Boolean(getStoredAuthToken());
+  });
+
+  // User Profile State
+  const [user, setUser] = useState<UserProfile>(() => {
+    const saved = localStorage.getItem('streamadda_user');
+    return saved ? JSON.parse(saved) : DEFAULT_USER;
+  });
+
+  // Strict Admin Privilege: requires user to be actively authenticated AND have role === 'admin'
+  const isAdmin = Boolean(isAuthenticated && user?.role === 'admin');
+
+  // Security guard: If viewing admin view but not logged in as admin, redirect to dashboard
+  useEffect(() => {
+    if (currentView === 'admin' && !isAdmin) {
+      setCurrentView('dashboard');
+    }
+  }, [currentView, isAdmin]);
+
+  // Theme State
+  const [isDark, setIsDark] = useState<boolean>(() => {
+    return user.theme === 'dark';
+  });
+
+  // Slots State
+  const [slots, setSlots] = useState<Slot[]>(() => {
+    const savedUser = localStorage.getItem('streamadda_user');
+    const uId = savedUser ? JSON.parse(savedUser).id : 'usr_guest';
+    const saved = localStorage.getItem(`streamadda_slots_${uId}`) || localStorage.getItem('streamadda_slots');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  // Videos State
+  const [videos, setVideos] = useState<VideoItem[]>(() => {
+    const savedUser = localStorage.getItem('streamadda_user');
+    const uId = savedUser ? JSON.parse(savedUser).id : 'usr_guest';
+    const saved = localStorage.getItem(`streamadda_videos_${uId}`);
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  // Selected slot for Slot Details view
+  const [selectedSlotId, setSelectedSlotId] = useState<string>(
+    slots[0]?.id || DEFAULT_INITIAL_SLOT.id
+  );
+
+  // Sync theme changes with DOM
+  useEffect(() => {
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDark]);
+
+  // Auth state listener
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
+      if (firebaseUser) {
+        setIsAuthenticatedGoogle(true);
+        setUser((prev) => {
+          const updated: UserProfile = {
+            ...prev,
+            id: firebaseUser.uid,
+            name: firebaseUser.displayName || prev.name,
+            email: firebaseUser.email || prev.email,
+            avatarInitials: (firebaseUser.displayName?.charAt(0) || firebaseUser.email?.charAt(0) || 'U').toUpperCase(),
+          };
+          saveUserProfile(updated).catch(console.error);
+          return updated;
+        });
+      } else {
+        setIsAuthenticatedGoogle(false);
+      }
+    });
+
+    return () => unsubscribeAuth();
+  }, []);
+
+  // Fetch initial data from MySQL backend & keep in sync
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadData() {
+      try {
+        const dbStatus = await fetchDbStatus();
+        if (isMounted) {
+          setIsRealtimeConnected(dbStatus.connected);
+        }
+
+        // 1. Fetch user (authenticated session takes precedence)
+        const token = getStoredAuthToken();
+        let remoteUser: UserProfile | null = null;
+        if (token) {
+          try {
+            remoteUser = await fetchCurrentUser();
+            if (remoteUser && isMounted) {
+              setIsAuthenticated(true);
+            }
+          } catch {
+            if (isMounted) {
+              setIsAuthenticated(false);
+              logoutUserSession();
+            }
+          }
+        }
+        if (!remoteUser) {
+          remoteUser = await fetchUserProfile(user.id);
+        }
+        if (isMounted && remoteUser) {
+          setUser(remoteUser);
+          setIsDark(remoteUser.theme === 'dark');
+          localStorage.setItem('streamadda_user', JSON.stringify(remoteUser));
+        } else if (isMounted) {
+          saveUserProfile(user).catch(console.error);
+        }
+
+        // 2. Fetch slots from MySQL for this user
+        const targetUserId = remoteUser?.id || user.id;
+        const remoteSlots = await fetchSlots(targetUserId);
+        if (isMounted) {
+          if (remoteSlots && remoteSlots.length > 0) {
+            setSlots(remoteSlots);
+            localStorage.setItem(`streamadda_slots_${targetUserId}`, JSON.stringify(remoteSlots));
+          } else {
+            const initialUserSlot: Slot = {
+              ...DEFAULT_INITIAL_SLOT,
+              id: `slot_${targetUserId.slice(-6)}_${Date.now().toString().slice(-4)}`,
+              userId: targetUserId,
+              name: 'Live Slot 1',
+            };
+            await saveSlot(initialUserSlot).catch(() => {});
+            setSlots([initialUserSlot]);
+            localStorage.setItem(`streamadda_slots_${targetUserId}`, JSON.stringify([initialUserSlot]));
+          }
+        }
+
+        // 3. Fetch videos from MySQL strictly for this user (never expose other users' database videos)
+        const remoteVideos = await fetchVideos(targetUserId);
+        if (isMounted) {
+          setVideos(remoteVideos || []);
+          localStorage.setItem(`streamadda_videos_${targetUserId}`, JSON.stringify(remoteVideos || []));
+        }
+
+        // 4. Fetch site settings & apply SEO meta tags dynamically
+        try {
+          const siteSettings = await fetchPublicSettings();
+          if (siteSettings.site_title) {
+            document.title = siteSettings.site_title;
+          }
+          if (siteSettings.meta_description) {
+            let metaDesc = document.querySelector('meta[name="description"]');
+            if (!metaDesc) {
+              metaDesc = document.createElement('meta');
+              metaDesc.setAttribute('name', 'description');
+              document.head.appendChild(metaDesc);
+            }
+            metaDesc.setAttribute('content', siteSettings.meta_description);
+          }
+          if (siteSettings.meta_keywords) {
+            let metaKeywords = document.querySelector('meta[name="keywords"]');
+            if (!metaKeywords) {
+              metaKeywords = document.createElement('meta');
+              metaKeywords.setAttribute('name', 'keywords');
+              document.head.appendChild(metaKeywords);
+            }
+            metaKeywords.setAttribute('content', siteSettings.meta_keywords);
+          }
+        } catch {}
+      } catch (err) {
+        console.warn('MySQL backend fetch error:', err);
+      }
+    }
+
+    loadData();
+
+    // Check DB status & slots periodically
+    const timer = setInterval(() => {
+      fetchDbStatus()
+        .then((s) => {
+          if (isMounted) setIsRealtimeConnected(s.connected);
+        })
+        .catch(() => {
+          if (isMounted) setIsRealtimeConnected(false);
+        });
+      fetchSlots()
+        .then((s) => {
+          if (isMounted && s && s.length > 0) setSlots(s);
+        })
+        .catch(() => {});
+    }, 10000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  const handleToggleTheme = () => {
+    const newTheme = isDark ? 'light' : 'dark';
+    setIsDark(!isDark);
+    const updatedUser = { ...user, theme: newTheme as 'light' | 'dark' };
+    setUser(updatedUser);
+    saveUserProfile(updatedUser).catch(console.error);
+  };
+
+  const handleSetTheme = (theme: 'light' | 'dark') => {
+    setIsDark(theme === 'dark');
+    const updatedUser = { ...user, theme };
+    setUser(updatedUser);
+    saveUserProfile(updatedUser).catch(console.error);
+  };
+
+  const handleUpdateUser = (updated: Partial<UserProfile>) => {
+    const updatedUser = { ...user, ...updated };
+    setUser(updatedUser);
+    saveUserProfile(updatedUser).catch(console.error);
+  };
+
+  const handleSignInGoogle = async () => {
+    try {
+      await signInWithGoogle();
+    } catch (e) {
+      console.error('Sign-in failed', e);
+    }
+  };
+
+  const handleOpenAuth = (authMode: 'login' | 'register' = 'login', asPage = false) => {
+    setAuthModalMode(authMode);
+    if (asPage) {
+      setMode('auth');
+    } else {
+      setIsAuthModalOpen(true);
+    }
+  };
+
+  const handleAuthSuccess = async (authedUser: UserProfile) => {
+    setUser(authedUser);
+    setIsAuthenticated(true);
+    setIsAuthModalOpen(false);
+    if (mode === 'auth') {
+      setMode('app');
+    }
+    if (authedUser.theme) {
+      setIsDark(authedUser.theme === 'dark');
+    }
+    localStorage.setItem('streamadda_user', JSON.stringify(authedUser));
+
+    // Immediately fetch this user's videos & slots strictly from MySQL
+    try {
+      const userVideos = await fetchVideos(authedUser.id);
+      setVideos(userVideos || []);
+      localStorage.setItem(`streamadda_videos_${authedUser.id}`, JSON.stringify(userVideos || []));
+
+      const userSlots = await fetchSlots(authedUser.id);
+      if (userSlots && userSlots.length > 0) {
+        setSlots(userSlots);
+        setSelectedSlotId(userSlots[0].id);
+        localStorage.setItem(`streamadda_slots_${authedUser.id}`, JSON.stringify(userSlots));
+      } else {
+        const userInitialSlot: Slot = {
+          ...DEFAULT_INITIAL_SLOT,
+          id: `slot_${authedUser.id.slice(-6)}_${Date.now().toString().slice(-4)}`,
+          userId: authedUser.id,
+          name: 'Live Slot 1',
+        };
+        await saveSlot(userInitialSlot).catch(() => {});
+        setSlots([userInitialSlot]);
+        setSelectedSlotId(userInitialSlot.id);
+        localStorage.setItem(`streamadda_slots_${authedUser.id}`, JSON.stringify([userInitialSlot]));
+      }
+    } catch (err) {
+      console.error('Failed to load user-specific database records:', err);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (confirm('Do you want to log out of StreamAdda?')) {
+      logoutUserSession();
+      await logOutUser().catch(() => {});
+      setUser(DEFAULT_USER);
+      setIsAuthenticated(false);
+      setVideos([]);
+      setSlots([]);
+      setCurrentView('dashboard');
+      setMode('landing');
+    }
+  };
+
+  // Slot handlers with MySQL Backend Persistence
+  const handleSelectSlot = (slot: Slot) => {
+    setSelectedSlotId(slot.id);
+    setCurrentView('slot-details');
+  };
+
+  const handleUpdateSlot = (updated: Slot) => {
+    const slotWithUser: Slot = {
+      ...updated,
+      userId: updated.userId || user.id,
+    };
+    setSlots((prev) => prev.map((s) => (s.id === slotWithUser.id ? slotWithUser : s)));
+    localStorage.setItem(
+      `streamadda_slots_${user.id}`,
+      JSON.stringify(slots.map((s) => (s.id === slotWithUser.id ? slotWithUser : s)))
+    );
+    saveSlot(slotWithUser).catch(console.error);
+
+    // If stream is active and key or video changed, restart cloud stream
+    if (updated.streamStatus === 'Live' && updated.streamKey?.trim()) {
+      const activeVideo = videos.find((v) => v.id === updated.videoId) || videos[0];
+      const videoPath = activeVideo?.videoPath || (activeVideo?.videoUrl?.startsWith('/') ? `public${activeVideo.videoUrl}` : activeVideo?.videoUrl || 'public/videos/lofi-chill.mp4');
+      startCloudStream({
+        slotId: updated.id,
+        streamKey: updated.streamKey,
+        platform: updated.platform,
+        customRtmpUrl: updated.rtmpServerUrl,
+        videoPath,
+        targetBitrateKbps: updated.targetBitrateKbps,
+        fps: updated.fpsPreset,
+        audioBitrateKbps: updated.audioBitrateKbps,
+      }).catch(console.error);
+    }
+  };
+
+  const handleToggleStream = (slotId: string, overrides?: Partial<Slot>) => {
+    setSlots((prev) =>
+      prev.map((s) => {
+        if (s.id === slotId) {
+          const merged: Slot = overrides ? { ...s, ...overrides } : s;
+          const willBeLive = overrides?.streamStatus
+            ? overrides.streamStatus === 'Live'
+            : s.streamStatus !== 'Live';
+
+          if (willBeLive) {
+            setIsLiveMonitorOpen(true);
+            setSelectedSlotId(slotId);
+
+            // Launch actual cloud streaming process via FFmpeg with the real stream key, selected video, and configured quality!
+            const targetVideoId = merged.videoId || s.videoId || videos[0]?.id;
+            const activeVideo = videos.find((v) => v.id === targetVideoId) || videos[0];
+            const videoPath =
+              activeVideo?.videoPath ||
+              (activeVideo?.videoUrl?.startsWith('/')
+                ? `public${activeVideo.videoUrl}`
+                : activeVideo?.videoUrl || 'public/videos/lofi-chill.mp4');
+
+            startCloudStream({
+              slotId: merged.id,
+              streamKey: merged.streamKey,
+              platform: merged.platform || 'YouTube',
+              customRtmpUrl: merged.rtmpServerUrl,
+              videoPath,
+              targetBitrateKbps: merged.targetBitrateKbps,
+              fps: merged.fpsPreset,
+              audioBitrateKbps: merged.audioBitrateKbps,
+            }).catch(console.error);
+          } else {
+            // Stop cloud streaming process
+            stopCloudStream(slotId).catch(console.error);
+          }
+          const updatedSlot: Slot = {
+            ...merged,
+            streamStatus: willBeLive ? 'Live' : 'Off',
+          };
+          if (willBeLive) {
+            updatedSlot.startedAt = s.startedAt || Date.now();
+          } else {
+            delete updatedSlot.startedAt;
+          }
+          saveSlot(updatedSlot).catch(console.error);
+          return updatedSlot;
+        }
+        return s;
+      })
+    );
+  };
+
+  const handleDeleteSlot = (slotId: string) => {
+    setSlots((prev) => {
+      const remaining = prev.filter((s) => s.id !== slotId);
+      localStorage.setItem('streamadda_slots', JSON.stringify(remaining));
+      return remaining;
+    });
+    deleteSlot(slotId).catch(console.error);
+    if (selectedSlotId === slotId) {
+      setSelectedSlotId(slots.find((s) => s.id !== slotId)?.id || '');
+    }
+  };
+
+  const handleAddSlot = (slotName: string, scheduleStart?: boolean, startTime?: string) => {
+    const newSlot: Slot = {
+      id: `${Math.random().toString(16).substring(2, 10)}${Date.now().toString(16)}`,
+      name: slotName,
+      status: 'active',
+      streamStatus: scheduleStart ? 'Scheduled' : 'Off',
+      scheduleStartEnabled: scheduleStart,
+      streamStartTime: startTime || 'October 30th, 2026 06:00 PM',
+      expireOn: '29 Nov 2026 - 11:59 PM',
+      expiresAt: Date.now() + 30 * 24 * 3600 * 1000,
+      streamKey: `live-${Math.random().toString(36).substring(2, 12)}`,
+      platform: 'YouTube',
+      streamLoop: true,
+      streamEndTime: 'November 29th, 2026 11:59 PM',
+      videoId: videos[0]?.id,
+    };
+    setSlots((prev) => [newSlot, ...prev]);
+    setSelectedSlotId(newSlot.id);
+    saveSlot(newSlot).catch(console.error);
+  };
+
+  const handleScheduleStream = (slotId: string, startTime: string) => {
+    setSlots((prev) =>
+      prev.map((s) => {
+        if (s.id === slotId) {
+          const updated: Slot = {
+            ...s,
+            scheduleStartEnabled: true,
+            streamStartTime: startTime,
+            streamStatus: 'Scheduled',
+          };
+          saveSlot(updated).catch(console.error);
+          return updated;
+        }
+        return s;
+      })
+    );
+  };
+
+  const handleCancelSchedule = (slotId: string) => {
+    setSlots((prev) =>
+      prev.map((s) => {
+        if (s.id === slotId) {
+          const updated: Slot = {
+            ...s,
+            scheduleStartEnabled: false,
+            streamStatus: 'Off',
+          };
+          saveSlot(updated).catch(console.error);
+          return updated;
+        }
+        return s;
+      })
+    );
+  };
+
+  // Video handlers with MySQL Backend Persistence (strictly user-scoped)
+  const handleAddVideo = (video: VideoItem) => {
+    const videoWithUser: VideoItem = {
+      ...video,
+      userId: user.id,
+    };
+    setVideos((prev) => {
+      const updated = [videoWithUser, ...prev];
+      localStorage.setItem(`streamadda_videos_${user.id}`, JSON.stringify(updated));
+      return updated;
+    });
+    saveVideo(videoWithUser).catch(console.error);
+  };
+
+  const handleDeleteVideo = (videoId: string) => {
+    setVideos((prev) => {
+      const remaining = prev.filter((v) => v.id !== videoId);
+      localStorage.setItem(`streamadda_videos_${user.id}`, JSON.stringify(remaining));
+      return remaining;
+    });
+    deleteVideo(videoId).catch(console.error);
+    import('./lib/videoStorage').then(({ deleteLocalVideoBlob }) => {
+      deleteLocalVideoBlob(videoId).catch(console.error);
+    });
+    // Unlink from slots
+    setSlots((prev) =>
+      prev.map((s) => {
+        if (s.videoId === videoId) {
+          const updated = { ...s, videoId: undefined };
+          saveSlot(updated).catch(console.error);
+          return updated;
+        }
+        return s;
+      })
+    );
+  };
+
+  // Billing renewal/add with MySQL Backend recording
+  const handleRenewSlot = (slotId: string, period: BillingPeriod, count: number) => {
+    setSlots((prev) =>
+      prev.map((s) => {
+        if (s.id === slotId) {
+          const addedDays = period === '3 Months' ? 90 : period === 'Months' ? 30 : period === 'Weeks' ? 7 : 1;
+          const newExpiresAt = s.expiresAt + addedDays * count * 24 * 3600 * 1000;
+          const d = new Date(newExpiresAt);
+          const dateStr = `${d.getDate()} ${d.toLocaleString('default', { month: 'short' })} ${d.getFullYear()} - 04:29 PM`;
+          const updatedSlot: Slot = {
+            ...s,
+            status: 'active',
+            expiresAt: newExpiresAt,
+            expireOn: dateStr,
+          };
+          saveSlot(updatedSlot).catch(console.error);
+
+          // Record order to database
+          const plan = BILLING_PLANS[period];
+          recordOrder({
+            id: `ord-${Date.now()}`,
+            userId: user.id,
+            slotId: s.id,
+            period,
+            count,
+            currency: 'INR',
+            amount: (plan?.priceINR || 1999) * count,
+            status: 'completed',
+            createdAt: new Date().toISOString(),
+          }).catch(console.error);
+
+          return updatedSlot;
+        }
+        return s;
+      })
+    );
+  };
+
+  const handleAddSlotsPurchased = (period: BillingPeriod, count: number) => {
+    for (let i = 0; i < count; i++) {
+      handleAddSlot(`Slot ${Date.now() + i}`);
+    }
+    const plan = BILLING_PLANS[period];
+    recordOrder({
+      id: `ord-${Date.now()}`,
+      userId: user.id,
+      period,
+      count,
+      currency: 'INR',
+      amount: (plan?.priceINR || 1999) * count,
+      status: 'completed',
+      createdAt: new Date().toISOString(),
+    }).catch(console.error);
+  };
+
+  const currentActiveSlot = slots.find((s) => s.id === selectedSlotId) || slots[0] || DEFAULT_INITIAL_SLOT;
+  const activeStreamingSlot = slots.find((s) => s.streamStatus === 'Live') || currentActiveSlot;
+  const currentSlotVideo = videos.find((v) => v.id === activeStreamingSlot.videoId);
+
+  // Resolve Header Title based on current view
+  const getViewTitle = () => {
+    switch (currentView) {
+      case 'dashboard':
+        return 'Dashboard';
+      case 'live-slots':
+        return 'Live Slots';
+      case 'slot-details':
+        return 'Live slot details';
+      case 'videos':
+        return 'Videos';
+      case 'billing':
+        return 'Billing';
+      case 'profile':
+        return 'Profile';
+      case 'admin':
+        return 'Admin Control Center';
+      default:
+        return 'Dashboard';
+    }
+  };
+
+  // Dedicated Full-Page Auth View (Sign In / Register)
+  if (mode === 'auth') {
+    return (
+      <>
+        <AuthPageView
+          initialMode={authModalMode}
+          onAuthSuccess={handleAuthSuccess}
+          onGoBackToLanding={() => setMode('landing')}
+        />
+        <ContactModal
+          isOpen={isContactOpen}
+          onClose={() => setIsContactOpen(false)}
+        />
+      </>
+    );
+  }
+
+  // If in public landing page mode
+  if (mode === 'landing') {
+    return (
+      <>
+        <LandingPageView
+          onGoToDashboard={() => setMode('app')}
+          onOpenContact={() => setIsContactOpen(true)}
+          onOpenAuth={(authMode) => handleOpenAuth(authMode || 'login')}
+          isAuthenticated={isAuthenticated}
+          user={user}
+          onLogout={handleLogout}
+        />
+        <ContactModal
+          isOpen={isContactOpen}
+          onClose={() => setIsContactOpen(false)}
+        />
+        <AuthModal
+          isOpen={isAuthModalOpen}
+          initialMode={authModalMode}
+          onClose={() => setIsAuthModalOpen(false)}
+          onAuthSuccess={handleAuthSuccess}
+        />
+      </>
+    );
+  }
+
+  // App Console Mode (Dashboard, Live Slots, Slot Details, Videos, Billing, Profile)
+  return (
+    <div className="min-h-screen bg-[#f8fafc] dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex transition-colors">
+      {/* Sidebar Navigation */}
+      <Sidebar
+        currentView={currentView}
+        onNavigate={(view) => setCurrentView(view)}
+        onOpenTutorial={() => setIsTutorialOpen(true)}
+        onOpenContact={() => setIsContactOpen(true)}
+        onSwitchToLanding={() => setMode('landing')}
+        onLogout={handleLogout}
+        isAuthenticated={isAuthenticated}
+        isAdmin={isAdmin}
+        onOpenAuth={(authMode) => handleOpenAuth(authMode || 'login')}
+        isMobileOpen={isMobileMenuOpen}
+        onCloseMobile={() => setIsMobileMenuOpen(false)}
+      />
+
+      {/* Main Content Area (offset by 64px for sidebar on desktop) */}
+      <div className="flex-1 flex flex-col md:pl-64 min-w-0">
+        {/* Top Header */}
+        <Header
+          title={getViewTitle()}
+          user={user}
+          isDark={isDark}
+          isRealtimeConnected={isRealtimeConnected}
+          isAuthenticated={isAuthenticated}
+          onOpenAuth={(authMode) => handleOpenAuth(authMode || 'login')}
+          onLogout={handleLogout}
+          onToggleTheme={handleToggleTheme}
+          onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
+          onNavigateToProfile={() => setCurrentView('profile')}
+          onNavigateToAdmin={isAdmin ? () => setCurrentView('admin') : undefined}
+          onSwitchToLanding={() => setMode('landing')}
+        />
+
+        {/* Dynamic View Render */}
+        <main className="flex-1 pb-16">
+          {currentView === 'dashboard' && (
+            <DashboardView
+              slots={slots}
+              videos={videos}
+              onNavigate={(view) => setCurrentView(view)}
+              onSelectSlot={handleSelectSlot}
+            />
+          )}
+
+          {currentView === 'live-slots' && (
+            <LiveSlotsView
+              slots={slots}
+              onSelectSlot={handleSelectSlot}
+              onNavigate={(view) => setCurrentView(view)}
+              onToggleStream={handleToggleStream}
+              onDeleteSlot={handleDeleteSlot}
+              onAddSlot={handleAddSlot}
+            />
+          )}
+
+          {currentView === 'slot-details' && (
+            <SlotDetailsView
+              slot={currentActiveSlot}
+              videos={videos}
+              onUpdateSlot={handleUpdateSlot}
+              onNavigate={(view) => setCurrentView(view)}
+              onToggleStream={handleToggleStream}
+              onScheduleStream={handleScheduleStream}
+              onCancelSchedule={handleCancelSchedule}
+            />
+          )}
+
+          {currentView === 'videos' && (
+            <VideosView
+              videos={videos}
+              user={user}
+              onAddVideo={handleAddVideo}
+              onDeleteVideo={handleDeleteVideo}
+            />
+          )}
+
+          {currentView === 'billing' && (
+            <BillingView
+              slots={slots}
+              user={user}
+              onRenewSlot={handleRenewSlot}
+              onAddSlotsPurchased={handleAddSlotsPurchased}
+              onOpenContact={() => setIsContactOpen(true)}
+            />
+          )}
+
+          {currentView === 'profile' && (
+            <ProfileView
+              user={user}
+              isDark={isDark}
+              onUpdateUser={handleUpdateUser}
+              onSetTheme={handleSetTheme}
+              onLogout={handleLogout}
+            />
+          )}
+
+          {currentView === 'admin' && isAdmin && (
+            <AdminDashboardView
+              currentUser={user}
+              slots={slots}
+              videos={videos}
+              onNavigateToSlots={() => setCurrentView('live-slots')}
+            />
+          )}
+        </main>
+      </div>
+
+      {/* Modals */}
+      <TutorialModal
+        isOpen={isTutorialOpen}
+        onClose={() => setIsTutorialOpen(false)}
+        onGoToSlots={() => setCurrentView('live-slots')}
+      />
+
+      <ContactModal
+        isOpen={isContactOpen}
+        onClose={() => setIsContactOpen(false)}
+      />
+
+      <LiveStreamSimulatorModal
+        isOpen={isLiveMonitorOpen}
+        slot={activeStreamingSlot}
+        video={currentSlotVideo}
+        onClose={() => setIsLiveMonitorOpen(false)}
+        onStopStream={() => handleToggleStream(activeStreamingSlot.id)}
+        onUpdateStreamKey={(newKey) => {
+          const updated: Slot = { ...activeStreamingSlot, streamKey: newKey };
+          handleUpdateSlot(updated);
+        }}
+      />
+
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        initialMode={authModalMode}
+        onClose={() => setIsAuthModalOpen(false)}
+        onAuthSuccess={handleAuthSuccess}
+      />
+    </div>
+  );
+}
