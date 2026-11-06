@@ -446,9 +446,27 @@ app.post('/api/stream/start', async (req, res) => {
       }
 
       // Check for errors
-      if (line.includes('Input/output error') || line.includes('Server error') || line.includes('Connection refused')) {
+      const lower = line.toLowerCase();
+      if (
+        lower.includes('input/output error') ||
+        lower.includes('io error') ||
+        lower.includes('server error') ||
+        lower.includes('connection refused') ||
+        lower.includes('handshake failed') ||
+        lower.includes('connection timed out') ||
+        lower.includes('broken pipe') ||
+        lower.includes('connection reset') ||
+        lower.includes('failed to connect') ||
+        lower.includes('rtmp_connect')
+      ) {
         session.status = 'error';
-        session.lastError = 'YouTube rejected connection: Invalid or expired stream key, or YouTube ingest closed.';
+        session.lastError = 'YouTube rejected connection: Invalid, expired, or inactive Stream Key. Please make sure Live Streaming is enabled on your channel and copy the active key from YouTube Studio.';
+      } else if (lower.includes('no such file or directory') || lower.includes('cannot open')) {
+        session.status = 'error';
+        session.lastError = 'Video file could not be found or opened on server. Please select a valid video in the slot settings.';
+      } else if (lower.includes('permission denied')) {
+        session.status = 'error';
+        session.lastError = 'Permission denied accessing video or encoder on server.';
       }
     }
   });
@@ -456,7 +474,22 @@ app.post('/api/stream/start', async (req, res) => {
   child.on('close', (code) => {
     session.status = code === 0 ? 'stopped' : 'error';
     if (code !== 0 && !session.lastError) {
-      session.lastError = `FFmpeg exited with code ${code}`;
+      const errorMsg = [...session.logs].reverse().find(l => {
+        const low = l.toLowerCase();
+        return (
+          low.includes('error') ||
+          low.includes('failed') ||
+          low.includes('invalid') ||
+          low.includes('rejected') ||
+          low.includes('denied')
+        );
+      });
+
+      if (errorMsg) {
+        session.lastError = `Stream failed: ${errorMsg}`;
+      } else {
+        session.lastError = `FFmpeg exited with code ${code}. Most common cause: Invalid or dummy YouTube Stream Key. Please copy your real Stream Key from YouTube Studio (studio.youtube.com).`;
+      }
     }
     session.logs.push(`[${new Date().toLocaleTimeString()}] Stream process ended (code ${code})`);
   });

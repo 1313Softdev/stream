@@ -433,11 +433,37 @@ export const LiveStreamSimulatorModal: React.FC<LiveStreamSimulatorModalProps> =
                   )}
 
                   {telemetry?.lastError && (
-                    <div className="mt-2 p-2.5 rounded-lg bg-red-950/80 border border-red-800 text-red-300 text-[11px] font-sans">
-                      <div className="font-bold flex items-center gap-1 mb-0.5">
-                        <AlertTriangle className="w-3.5 h-3.5" /> Connection Alert
+                    <div className="mt-2 p-3 rounded-xl bg-red-950/90 border border-red-800 text-red-200 text-xs font-sans space-y-2">
+                      <div className="font-bold flex items-center gap-1.5 text-red-300">
+                        <AlertTriangle className="w-4 h-4 shrink-0 text-red-400" />
+                        <span>Connection Alert</span>
                       </div>
-                      <p>{telemetry.lastError}</p>
+                      <p className="text-red-200/90 leading-relaxed">{telemetry.lastError}</p>
+
+                      <div className="pt-2 border-t border-red-900/60 flex flex-wrap items-center gap-2">
+                        {getStudioLink() && (
+                          <a
+                            href={getStudioLink()}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-semibold text-[11px] transition-colors"
+                          >
+                            <span>Open {slot.platform} Studio</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsEditingKey(true);
+                            setActiveTab('logs');
+                          }}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-[11px] transition-colors"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                          <span>Change Stream Key</span>
+                        </button>
+                      </div>
                     </div>
                   )}
                   <div ref={terminalEndRef} />
