@@ -1479,7 +1479,7 @@ function getIngestUrl(platform, rawStreamKey, customUrl) {
     return `${base}/${cleanKey}`;
   }
   if (lower.includes("youtube")) {
-    return `rtmps://a.rtmp.youtube.com:443/live2/${cleanKey}`;
+    return `rtmp://a.rtmp.youtube.com/live2/${cleanKey}`;
   }
   if (lower.includes("facebook")) {
     return `rtmps://live-api-s.facebook.com:443/rtmp/${cleanKey}`;
@@ -1487,7 +1487,7 @@ function getIngestUrl(platform, rawStreamKey, customUrl) {
   if (lower.includes("twitch")) {
     return `rtmp://live.twitch.tv/app/${cleanKey}`;
   }
-  return `rtmps://a.rtmp.youtube.com:443/live2/${cleanKey}`;
+  return `rtmp://a.rtmp.youtube.com/live2/${cleanKey}`;
 }
 function getFfmpegPath() {
   if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) {
@@ -1667,6 +1667,8 @@ app.post("/api/stream/start", async (req, res) => {
       "libx264",
       "-preset",
       "veryfast",
+      "-tune",
+      "zerolatency",
       "-b:v",
       videoBitrateStr,
       "-maxrate",
@@ -1676,6 +1678,8 @@ app.post("/api/stream/start", async (req, res) => {
       "-pix_fmt",
       "yuv420p",
       "-g",
+      String(gopSize),
+      "-keyint_min",
       String(gopSize),
       "-c:a",
       "aac",
@@ -1708,6 +1712,8 @@ app.post("/api/stream/start", async (req, res) => {
       "libx264",
       "-preset",
       "veryfast",
+      "-tune",
+      "zerolatency",
       "-b:v",
       videoBitrateStr,
       "-maxrate",
@@ -1717,6 +1723,8 @@ app.post("/api/stream/start", async (req, res) => {
       "-pix_fmt",
       "yuv420p",
       "-g",
+      String(gopSize),
+      "-keyint_min",
       String(gopSize),
       "-c:a",
       "aac",
@@ -1920,7 +1928,7 @@ app.post("/api/stream/test-key", async (req, res) => {
       return res.json({
         valid: true,
         message: "Handshake successful! YouTube ingest accepted stream key.",
-        details: "YouTube Live is actively receiving stream packets over RTMPS port 443."
+        details: "YouTube Live is actively receiving stream packets over RTMP."
       });
     } else {
       const lowStderr = stderrOutput.toLowerCase();

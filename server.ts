@@ -133,8 +133,7 @@ function getIngestUrl(platform: string, rawStreamKey: string, customUrl?: string
   }
 
   if (lower.includes('youtube')) {
-    // Port 443 with RTMPS is YouTube's modern secure protocol and passes through all host firewalls (Hostinger, AWS, VPS)
-    return `rtmps://a.rtmp.youtube.com:443/live2/${cleanKey}`;
+    return `rtmp://a.rtmp.youtube.com/live2/${cleanKey}`;
   }
   if (lower.includes('facebook')) {
     return `rtmps://live-api-s.facebook.com:443/rtmp/${cleanKey}`;
@@ -142,7 +141,7 @@ function getIngestUrl(platform: string, rawStreamKey: string, customUrl?: string
   if (lower.includes('twitch')) {
     return `rtmp://live.twitch.tv/app/${cleanKey}`;
   }
-  return `rtmps://a.rtmp.youtube.com:443/live2/${cleanKey}`;
+  return `rtmp://a.rtmp.youtube.com/live2/${cleanKey}`;
 }
 
 // Helpers for cross-platform FFmpeg & FFprobe detection
@@ -348,11 +347,13 @@ app.post('/api/stream/start', async (req, res) => {
       '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
       '-c:v', 'libx264',
       '-preset', 'veryfast',
+      '-tune', 'zerolatency',
       '-b:v', videoBitrateStr,
       '-maxrate', videoBitrateStr,
       '-bufsize', `${bitrateNum * 2}k`,
       '-pix_fmt', 'yuv420p',
       '-g', String(gopSize),
+      '-keyint_min', String(gopSize),
       '-c:a', 'aac',
       '-b:a', audioBitrateStr,
       '-ar', '44100',
@@ -372,11 +373,13 @@ app.post('/api/stream/start', async (req, res) => {
       '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
       '-c:v', 'libx264',
       '-preset', 'veryfast',
+      '-tune', 'zerolatency',
       '-b:v', videoBitrateStr,
       '-maxrate', videoBitrateStr,
       '-bufsize', `${bitrateNum * 2}k`,
       '-pix_fmt', 'yuv420p',
       '-g', String(gopSize),
+      '-keyint_min', String(gopSize),
       '-c:a', 'aac',
       '-b:a', audioBitrateStr,
       '-ar', '44100',
@@ -606,7 +609,7 @@ app.post('/api/stream/test-key', async (req, res) => {
   const targetUrl = getIngestUrl(platform, cleanedKey, customRtmpUrl);
   const testVideo = path.resolve(__dirname, 'public/sample-stream.mp4');
 
-  // Probe with a 2-second test frame using RTMPS port 443
+  // Probe with a 2-second test frame using RTMP
   const probeArgs = [
     '-re',
     '-i', testVideo,
@@ -651,7 +654,7 @@ app.post('/api/stream/test-key', async (req, res) => {
       return res.json({
         valid: true,
         message: 'Handshake successful! YouTube ingest accepted stream key.',
-        details: 'YouTube Live is actively receiving stream packets over RTMPS port 443.',
+        details: 'YouTube Live is actively receiving stream packets over RTMP.',
       });
     } else {
       const lowStderr = stderrOutput.toLowerCase();
