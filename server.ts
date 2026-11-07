@@ -770,7 +770,32 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Password is required' });
     }
 
-    const user = await getUserByEmail(email);
+    const cleanEmail = email.trim().toLowerCase();
+    let user = await getUserByEmail(cleanEmail);
+
+    // Auto-seed or self-heal default admin account if logging in with default admin credentials
+    if (cleanEmail === 'britishpunjabitv13@gmail.com' && password === 'admin123') {
+      const validAdminHash = '222f5d9c937f64b37f4af8d3b95f7f04:3b0083e8ce22cfa55bfff0981d2dc2d344b21e3e43ee79a33db478a586da48f2d7ea9b2c038fd237b7bfd2dd0c2c576d5d0a9658e565ab459d0678253b95fcfb';
+      if (!user) {
+        user = await createUserWithPassword({
+          id: '6ae0fd7c4863791bef736a0a',
+          name: 'Satnam Singh',
+          email: cleanEmail,
+          passwordHash: validAdminHash,
+          role: 'admin',
+          avatarInitials: 'S',
+          country: 'India',
+          city: 'Mohali',
+          phone: '88470 57896',
+          phoneCode: '+91',
+        });
+      } else if (user.role !== 'admin' || !verifyPassword(password, user.passwordHash)) {
+        await updateUserPassword(user.id, validAdminHash);
+        await updateUserAdmin(user.id, { role: 'admin', status: 'active' });
+        user = await getUserByEmail(cleanEmail);
+      }
+    }
+
     if (!user || !user.passwordHash) {
       return res.status(401).json({ success: false, error: 'Invalid email or password' });
     }

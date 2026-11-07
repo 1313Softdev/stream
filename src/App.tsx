@@ -432,9 +432,9 @@ export default function App() {
     setIsAuthenticated(true);
     setIsAuthModalOpen(false);
     setShowInactivityModal(false);
-    // Requirement 2: Open dashboard when user logs in
+    // Direct admin users to Admin Control Center, regular users to Dashboard
     setMode('app');
-    setCurrentView('dashboard');
+    setCurrentView(authedUser.role === 'admin' ? 'admin' : 'dashboard');
     if (authedUser.theme) {
       setIsDark(authedUser.theme === 'dark');
     }
