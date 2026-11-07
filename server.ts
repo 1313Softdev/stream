@@ -426,6 +426,7 @@ app.post('/api/stream/start', async (req, res) => {
       // Example: frame=  120 fps= 30 q=24.0 size=    1024kB time=00:00:04.00 bitrate=1048.5kbits/s speed=1.0x
       if (line.includes('frame=') && line.includes('bitrate=')) {
         session.status = 'live';
+        session.lastError = undefined;
 
         const fpsMatch = line.match(/fps=\s*([\d.]+)/);
         const bitrateMatch = line.match(/bitrate=\s*([\w./]+)/);
@@ -589,7 +590,7 @@ app.get('/api/stream/status/:slotId', (req, res) => {
     uptimeSeconds: Math.floor((Date.now() - session.startedAt) / 1000),
     logs: session.logs.slice(-30),
     stats: session.lastStats,
-    lastError: session.lastError || null,
+    lastError: session.status === 'live' ? null : (session.lastError || null),
   });
 });
 

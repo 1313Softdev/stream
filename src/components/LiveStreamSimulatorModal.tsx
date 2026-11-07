@@ -51,11 +51,13 @@ export const LiveStreamSimulatorModal: React.FC<LiveStreamSimulatorModalProps> =
   const [activeTab, setActiveTab] = useState<'logs' | 'telemetry' | 'guide'>('logs');
   const [telemetry, setTelemetry] = useState<StreamTelemetry | null>(null);
   const [copiedKey, setCopiedKey] = useState(false);
+  const [isAlertDismissed, setIsAlertDismissed] = useState(false);
   const terminalEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setNewKeyInput(slot.streamKey);
-  }, [slot.streamKey]);
+    setIsAlertDismissed(false);
+  }, [slot.streamKey, slot.id]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -460,24 +462,34 @@ export const LiveStreamSimulatorModal: React.FC<LiveStreamSimulatorModalProps> =
                     </div>
                   )}
 
-                  {telemetry?.lastError && (
+                  {!isLive && !isAlertDismissed && telemetry?.status === 'error' && telemetry?.lastError && (
                     <div className="mt-2 p-3.5 rounded-xl bg-red-950/90 border border-red-800 text-red-200 text-xs font-sans space-y-3 shadow-lg">
                       <div className="font-bold flex items-center justify-between text-red-300">
                         <div className="flex items-center gap-1.5 text-sm">
                           <AlertTriangle className="w-4 h-4 shrink-0 text-red-400" />
                           <span>Stream Key Connection Alert</span>
                         </div>
-                        {getStudioLink() && (
-                          <a
-                            href={getStudioLink()}
-                            target="_blank"
-                            rel="noreferrer noopener"
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-red-600 hover:bg-red-500 text-white font-semibold text-[11px] transition-colors"
+                        <div className="flex items-center gap-2">
+                          {getStudioLink() && (
+                            <a
+                              href={getStudioLink()}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-red-600 hover:bg-red-500 text-white font-semibold text-[11px] transition-colors"
+                            >
+                              <span>Open {slot.platform} Studio</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setIsAlertDismissed(true)}
+                            className="p-1 rounded-md text-red-300 hover:text-white hover:bg-red-900/60 transition-colors cursor-pointer"
+                            title="Dismiss alert"
                           >
-                            <span>Open {slot.platform} Studio</span>
-                            <ExternalLink className="w-3 h-3" />
-                          </a>
-                        )}
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
 
                       <p className="text-red-200/90 leading-relaxed text-xs">{telemetry.lastError}</p>
