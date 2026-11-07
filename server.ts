@@ -133,7 +133,8 @@ function getIngestUrl(platform: string, rawStreamKey: string, customUrl?: string
   }
 
   if (lower.includes('youtube')) {
-    return `rtmp://a.rtmp.youtube.com/live2/${cleanKey}`;
+    // Port 443 with RTMPS is YouTube's modern secure protocol and passes through all host firewalls (Hostinger, AWS, VPS)
+    return `rtmps://a.rtmp.youtube.com:443/live2/${cleanKey}`;
   }
   if (lower.includes('facebook')) {
     return `rtmps://live-api-s.facebook.com:443/rtmp/${cleanKey}`;
@@ -141,7 +142,7 @@ function getIngestUrl(platform: string, rawStreamKey: string, customUrl?: string
   if (lower.includes('twitch')) {
     return `rtmp://live.twitch.tv/app/${cleanKey}`;
   }
-  return `rtmp://a.rtmp.youtube.com/live2/${cleanKey}`;
+  return `rtmps://a.rtmp.youtube.com:443/live2/${cleanKey}`;
 }
 
 // Helpers for cross-platform FFmpeg & FFprobe detection
@@ -453,15 +454,22 @@ app.post('/api/stream/start', async (req, res) => {
         lower.includes('server error') ||
         lower.includes('connection refused') ||
         lower.includes('handshake failed') ||
+        lower.includes('cannot read rtmp handshake') ||
         lower.includes('connection timed out') ||
         lower.includes('broken pipe') ||
         lower.includes('connection reset') ||
         lower.includes('failed to connect') ||
-        lower.includes('rtmp_connect')
+        lower.includes('rtmp_connect') ||
+        lower.includes('end of file') ||
+        lower.includes('error writing trailer') ||
+        lower.includes('failed to resolve hostname') ||
+        lower.includes('nodename nor servname') ||
+        lower.includes('network is unreachable') ||
+        (lower.includes('rtmp') && (lower.includes('cannot open') || lower.includes('failed') || lower.includes('error')))
       ) {
         session.status = 'error';
-        session.lastError = 'YouTube rejected connection: Invalid, expired, or inactive Stream Key. Please make sure Live Streaming is enabled on your channel and copy the active key from YouTube Studio.';
-      } else if (lower.includes('no such file or directory') || lower.includes('cannot open')) {
+        session.lastError = 'YouTube Live rejected connection: Invalid or inactive Stream Key. Please copy your active Stream Key from YouTube Studio (studio.youtube.com/channel/live) and ensure Live Streaming is enabled.';
+      } else if (lower.includes('no such file or directory') || (lower.includes('cannot open') && !lower.includes('rtmp'))) {
         session.status = 'error';
         session.lastError = 'Video file could not be found or opened on server. Please select a valid video in the slot settings.';
       } else if (lower.includes('permission denied')) {
@@ -474,21 +482,46 @@ app.post('/api/stream/start', async (req, res) => {
   child.on('close', (code) => {
     session.status = code === 0 ? 'stopped' : 'error';
     if (code !== 0 && !session.lastError) {
+      // Find the most meaningful error line from logs, explicitly skipping generic FFmpeg wrappers
       const errorMsg = [...session.logs].reverse().find(l => {
-        const low = l.toLowerCase();
+        const low = l.toLowerCase().trim();
+        // Skip generic FFmpeg summary lines
+        if (
+          low.startsWith('conversion failed') ||
+          low.startsWith('stream process ended') ||
+          low.includes('exited with code') ||
+          low === 'conversion failed!'
+        ) {
+          return false;
+        }
         return (
           low.includes('error') ||
           low.includes('failed') ||
           low.includes('invalid') ||
           low.includes('rejected') ||
-          low.includes('denied')
+          low.includes('denied') ||
+          low.includes('refused') ||
+          low.includes('handshake') ||
+          low.includes('end of file')
         );
       });
 
       if (errorMsg) {
-        session.lastError = `Stream failed: ${errorMsg}`;
+        const low = errorMsg.toLowerCase();
+        if (
+          low.includes('rtmp') ||
+          low.includes('handshake') ||
+          low.includes('end of file') ||
+          low.includes('connection') ||
+          low.includes('broken pipe') ||
+          low.includes('io error')
+        ) {
+          session.lastError = 'YouTube Live rejected connection: Invalid or inactive Stream Key. Please copy your active Stream Key from YouTube Studio (studio.youtube.com/channel/live) and ensure Live Streaming is enabled.';
+        } else {
+          session.lastError = `Stream failed: ${errorMsg}`;
+        }
       } else {
-        session.lastError = `FFmpeg exited with code ${code}. Most common cause: Invalid or dummy YouTube Stream Key. Please copy your real Stream Key from YouTube Studio (studio.youtube.com).`;
+        session.lastError = 'YouTube Live rejected connection: Invalid or inactive Stream Key. Please copy your active Stream Key from YouTube Studio (studio.youtube.com/channel/live) and paste it into the slot settings.';
       }
     }
     session.logs.push(`[${new Date().toLocaleTimeString()}] Stream process ended (code ${code})`);
@@ -610,15 +643,22 @@ app.post('/api/stream/test-key', async (req, res) => {
         details: 'YouTube Live is actively receiving stream packets over RTMPS port 443.',
       });
     } else {
+      const lowStderr = stderrOutput.toLowerCase();
       const isKeyRejected =
-        stderrOutput.includes('Input/output error') ||
-        stderrOutput.includes('Server error') ||
-        stderrOutput.includes('Error in the pull function');
+        lowStderr.includes('input/output error') ||
+        lowStderr.includes('server error') ||
+        lowStderr.includes('error in the pull function') ||
+        lowStderr.includes('cannot read rtmp handshake') ||
+        lowStderr.includes('end of file') ||
+        lowStderr.includes('connection refused') ||
+        lowStderr.includes('cannot open connection') ||
+        lowStderr.includes('broken pipe') ||
+        lowStderr.includes('connection reset');
 
       return res.json({
         valid: false,
         message: isKeyRejected
-          ? 'YouTube ingest rejected this stream key. Please check that you copied an active Stream Key from YouTube Studio.'
+          ? 'YouTube Live rejected this stream key. Please check that you copied an active Stream Key from YouTube Studio.'
           : 'Failed to establish RTMP handshake.',
         details: isKeyRejected
           ? 'YouTube Studio closed connection: Ensure you created a live broadcast stream in YouTube Studio and copied its active Stream Key.'

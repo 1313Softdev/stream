@@ -433,36 +433,59 @@ export const LiveStreamSimulatorModal: React.FC<LiveStreamSimulatorModalProps> =
                   )}
 
                   {telemetry?.lastError && (
-                    <div className="mt-2 p-3 rounded-xl bg-red-950/90 border border-red-800 text-red-200 text-xs font-sans space-y-2">
-                      <div className="font-bold flex items-center gap-1.5 text-red-300">
-                        <AlertTriangle className="w-4 h-4 shrink-0 text-red-400" />
-                        <span>Connection Alert</span>
-                      </div>
-                      <p className="text-red-200/90 leading-relaxed">{telemetry.lastError}</p>
-
-                      <div className="pt-2 border-t border-red-900/60 flex flex-wrap items-center gap-2">
+                    <div className="mt-2 p-3.5 rounded-xl bg-red-950/90 border border-red-800 text-red-200 text-xs font-sans space-y-3 shadow-lg">
+                      <div className="font-bold flex items-center justify-between text-red-300">
+                        <div className="flex items-center gap-1.5 text-sm">
+                          <AlertTriangle className="w-4 h-4 shrink-0 text-red-400" />
+                          <span>Stream Key Connection Alert</span>
+                        </div>
                         {getStudioLink() && (
                           <a
                             href={getStudioLink()}
                             target="_blank"
                             rel="noreferrer noopener"
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-semibold text-[11px] transition-colors"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-red-600 hover:bg-red-500 text-white font-semibold text-[11px] transition-colors"
                           >
                             <span>Open {slot.platform} Studio</span>
                             <ExternalLink className="w-3 h-3" />
                           </a>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsEditingKey(true);
-                            setActiveTab('logs');
-                          }}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-[11px] transition-colors"
-                        >
-                          <Edit2 className="w-3 h-3" />
-                          <span>Change Stream Key</span>
-                        </button>
+                      </div>
+
+                      <p className="text-red-200/90 leading-relaxed text-xs">{telemetry.lastError}</p>
+
+                      <div className="p-3 rounded-lg bg-black/40 border border-red-900/60 space-y-2">
+                        <div className="text-[11px] font-semibold text-slate-300 flex items-center justify-between">
+                          <span>Paste Active Stream Key & Reconnect:</span>
+                          <span className="text-[10px] text-slate-400">From YouTube Studio Live tab</span>
+                        </div>
+                        <form onSubmit={handleApplyNewKey} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={newKeyInput}
+                            onChange={(e) => setNewKeyInput(e.target.value)}
+                            placeholder="Paste real YouTube Stream Key here..."
+                            className="flex-1 px-3 py-1.5 text-xs font-mono bg-slate-950 border border-red-800/80 rounded-lg text-white placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-red-400"
+                            required
+                          />
+                          <button
+                            type="submit"
+                            disabled={isReconnecting}
+                            className="px-3 py-1.5 text-xs font-bold bg-red-600 hover:bg-red-500 text-white rounded-lg shadow-sm flex items-center gap-1 shrink-0 cursor-pointer transition-colors"
+                          >
+                            {isReconnecting ? (
+                              <>
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                                <span>Connecting...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Zap className="w-3 h-3" />
+                                <span>Apply & Reconnect</span>
+                              </>
+                            )}
+                          </button>
+                        </form>
                       </div>
                     </div>
                   )}

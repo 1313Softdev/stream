@@ -1047,6 +1047,27 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
                   </div>
                 </div>
 
+                {telemetry?.lastError && (
+                  <div className="mt-2 p-3 rounded-lg bg-red-950/80 border border-red-800 text-red-200 text-xs space-y-1.5">
+                    <div className="font-bold flex items-center gap-1.5 text-red-300">
+                      <AlertTriangle className="w-4 h-4 shrink-0 text-red-400" />
+                      <span>Connection Alert: YouTube Stream Key Required</span>
+                    </div>
+                    <p className="text-red-200/90 text-[11px] leading-relaxed">{telemetry.lastError}</p>
+                    <div className="pt-1">
+                      <a
+                        href="https://studio.youtube.com/channel/live"
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-400 hover:text-red-300 underline"
+                      >
+                        <span>Open YouTube Studio to copy active key</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  </div>
+                )}
+
                 {showLogsDrawer && (
                   <div className="mt-2 p-2.5 rounded-lg bg-black font-mono text-[10px] text-slate-300 max-h-40 overflow-y-auto space-y-1 border border-slate-800">
                     {telemetry?.logs && telemetry.logs.length > 0 ? (
