@@ -20,6 +20,7 @@ import {
   Layers,
   Gauge,
   Check,
+  RotateCcw,
 } from 'lucide-react';
 import { Slot, VideoItem } from '../types';
 import { fetchStreamStatus, StreamTelemetry, startCloudStream } from '../lib/streamingService';
@@ -117,6 +118,33 @@ export const LiveStreamSimulatorModal: React.FC<LiveStreamSimulatorModalProps> =
       setTimeout(() => setKeySwapToast(null), 4000);
     } catch (err: any) {
       setKeySwapToast(`Error: ${err.message || 'Failed to reconnect'}`);
+      setTimeout(() => setKeySwapToast(null), 4000);
+    } finally {
+      setIsReconnecting(false);
+    }
+  };
+
+  const handleResetToDefaultAndReconnect = async () => {
+    setIsReconnecting(true);
+    try {
+      const res = await startCloudStream({
+        slotId: slot.id,
+        streamKey: newKeyInput.trim() || slot.streamKey,
+        platform: slot.platform,
+        customRtmpUrl: slot.rtmpServerUrl,
+        videoPath: 'public/videos/lofi-chill.mp4',
+        targetBitrateKbps: 2500,
+        fps: 30,
+        audioBitrateKbps: 128,
+      });
+      if (res.success) {
+        setKeySwapToast('Reset to default stream parameters & reconnecting...');
+        setTimeout(() => setKeySwapToast(null), 4000);
+      } else {
+        throw new Error(res.error || 'Failed to reconnect with defaults');
+      }
+    } catch (err: any) {
+      setKeySwapToast(`Error: ${err?.message || 'Failed to reset'}`);
       setTimeout(() => setKeySwapToast(null), 4000);
     } finally {
       setIsReconnecting(false);
@@ -486,6 +514,19 @@ export const LiveStreamSimulatorModal: React.FC<LiveStreamSimulatorModalProps> =
                             )}
                           </button>
                         </form>
+
+                        <div className="pt-2 border-t border-red-900/60 flex items-center justify-between">
+                          <span className="text-[10px] text-slate-400">Encountering encoder or parameter errors?</span>
+                          <button
+                            type="button"
+                            onClick={handleResetToDefaultAndReconnect}
+                            disabled={isReconnecting}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-purple-300 font-semibold text-[11px] transition-colors cursor-pointer"
+                          >
+                            <RotateCcw className="w-3 h-3 text-purple-400" />
+                            <span>Reset to Defaults (720p) & Reconnect</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}

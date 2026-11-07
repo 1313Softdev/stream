@@ -345,17 +345,14 @@ app.post('/api/stream/start', async (req, res) => {
       '-re',
       '-stream_loop', '-1',
       '-i', resolvedVideo,
+      '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-b:v', videoBitrateStr,
-      '-minrate', videoBitrateStr,
       '-maxrate', videoBitrateStr,
-      '-bufsize', videoBitrateStr,
-      '-x264-params', 'nal-hrd=cbr:force-cfr=1',
-      '-r', String(fpsNum),
+      '-bufsize', `${bitrateNum * 2}k`,
       '-pix_fmt', 'yuv420p',
       '-g', String(gopSize),
-      '-keyint_min', String(gopSize),
       '-c:a', 'aac',
       '-b:a', audioBitrateStr,
       '-ar', '44100',
@@ -372,17 +369,14 @@ app.post('/api/stream/start', async (req, res) => {
       '-i', resolvedVideo,
       '-f', 'lavfi',
       '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+      '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-b:v', videoBitrateStr,
-      '-minrate', videoBitrateStr,
       '-maxrate', videoBitrateStr,
-      '-bufsize', videoBitrateStr,
-      '-x264-params', 'nal-hrd=cbr:force-cfr=1',
-      '-r', String(fpsNum),
+      '-bufsize', `${bitrateNum * 2}k`,
       '-pix_fmt', 'yuv420p',
       '-g', String(gopSize),
-      '-keyint_min', String(gopSize),
       '-c:a', 'aac',
       '-b:a', audioBitrateStr,
       '-ar', '44100',
@@ -449,6 +443,15 @@ app.post('/api/stream/start', async (req, res) => {
       // Check for errors
       const lower = line.toLowerCase();
       if (
+        lower.includes('error while opening encoder') ||
+        lower.includes('error initializing output stream') ||
+        lower.includes('width not divisible by 2') ||
+        lower.includes('height not divisible by 2') ||
+        lower.includes('incorrect parameters such as bit_rate')
+      ) {
+        session.status = 'error';
+        session.lastError = 'Video encoder error: Video dimensions or parameters were incompatible. Please use default 720p (2500 Kbps) settings or select a standard MP4 video.';
+      } else if (
         lower.includes('input/output error') ||
         lower.includes('io error') ||
         lower.includes('server error') ||
@@ -509,6 +512,13 @@ app.post('/api/stream/start', async (req, res) => {
       if (errorMsg) {
         const low = errorMsg.toLowerCase();
         if (
+          low.includes('opening encoder') ||
+          low.includes('initializing output stream') ||
+          low.includes('bit_rate') ||
+          low.includes('width not divisible')
+        ) {
+          session.lastError = 'Video encoder error: Video dimensions or parameters were incompatible. Please use default 720p (2500 Kbps) settings or select a standard MP4 video.';
+        } else if (
           low.includes('rtmp') ||
           low.includes('handshake') ||
           low.includes('end of file') ||

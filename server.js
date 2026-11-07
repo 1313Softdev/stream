@@ -1661,27 +1661,21 @@ app.post("/api/stream/start", async (req, res) => {
       "-1",
       "-i",
       resolvedVideo,
+      "-vf",
+      "scale=trunc(iw/2)*2:trunc(ih/2)*2",
       "-c:v",
       "libx264",
       "-preset",
       "veryfast",
       "-b:v",
       videoBitrateStr,
-      "-minrate",
-      videoBitrateStr,
       "-maxrate",
       videoBitrateStr,
       "-bufsize",
-      videoBitrateStr,
-      "-x264-params",
-      "nal-hrd=cbr:force-cfr=1",
-      "-r",
-      String(fpsNum),
+      `${bitrateNum * 2}k`,
       "-pix_fmt",
       "yuv420p",
       "-g",
-      String(gopSize),
-      "-keyint_min",
       String(gopSize),
       "-c:a",
       "aac",
@@ -1708,27 +1702,21 @@ app.post("/api/stream/start", async (req, res) => {
       "lavfi",
       "-i",
       "anullsrc=channel_layout=stereo:sample_rate=44100",
+      "-vf",
+      "scale=trunc(iw/2)*2:trunc(ih/2)*2",
       "-c:v",
       "libx264",
       "-preset",
       "veryfast",
       "-b:v",
       videoBitrateStr,
-      "-minrate",
-      videoBitrateStr,
       "-maxrate",
       videoBitrateStr,
       "-bufsize",
-      videoBitrateStr,
-      "-x264-params",
-      "nal-hrd=cbr:force-cfr=1",
-      "-r",
-      String(fpsNum),
+      `${bitrateNum * 2}k`,
       "-pix_fmt",
       "yuv420p",
       "-g",
-      String(gopSize),
-      "-keyint_min",
       String(gopSize),
       "-c:a",
       "aac",
@@ -1790,7 +1778,10 @@ app.post("/api/stream/start", async (req, res) => {
         if (timeMatch) session.lastStats.time = timeMatch[1];
       }
       const lower = line.toLowerCase();
-      if (lower.includes("input/output error") || lower.includes("io error") || lower.includes("server error") || lower.includes("connection refused") || lower.includes("handshake failed") || lower.includes("cannot read rtmp handshake") || lower.includes("connection timed out") || lower.includes("broken pipe") || lower.includes("connection reset") || lower.includes("failed to connect") || lower.includes("rtmp_connect") || lower.includes("end of file") || lower.includes("error writing trailer") || lower.includes("failed to resolve hostname") || lower.includes("nodename nor servname") || lower.includes("network is unreachable") || lower.includes("rtmp") && (lower.includes("cannot open") || lower.includes("failed") || lower.includes("error"))) {
+      if (lower.includes("error while opening encoder") || lower.includes("error initializing output stream") || lower.includes("width not divisible by 2") || lower.includes("height not divisible by 2") || lower.includes("incorrect parameters such as bit_rate")) {
+        session.status = "error";
+        session.lastError = "Video encoder error: Video dimensions or parameters were incompatible. Please use default 720p (2500 Kbps) settings or select a standard MP4 video.";
+      } else if (lower.includes("input/output error") || lower.includes("io error") || lower.includes("server error") || lower.includes("connection refused") || lower.includes("handshake failed") || lower.includes("cannot read rtmp handshake") || lower.includes("connection timed out") || lower.includes("broken pipe") || lower.includes("connection reset") || lower.includes("failed to connect") || lower.includes("rtmp_connect") || lower.includes("end of file") || lower.includes("error writing trailer") || lower.includes("failed to resolve hostname") || lower.includes("nodename nor servname") || lower.includes("network is unreachable") || lower.includes("rtmp") && (lower.includes("cannot open") || lower.includes("failed") || lower.includes("error"))) {
         session.status = "error";
         session.lastError = "YouTube Live rejected connection: Invalid or inactive Stream Key. Please copy your active Stream Key from YouTube Studio (studio.youtube.com/channel/live) and ensure Live Streaming is enabled.";
       } else if (lower.includes("no such file or directory") || lower.includes("cannot open") && !lower.includes("rtmp")) {
@@ -1814,7 +1805,9 @@ app.post("/api/stream/start", async (req, res) => {
       });
       if (errorMsg) {
         const low = errorMsg.toLowerCase();
-        if (low.includes("rtmp") || low.includes("handshake") || low.includes("end of file") || low.includes("connection") || low.includes("broken pipe") || low.includes("io error")) {
+        if (low.includes("opening encoder") || low.includes("initializing output stream") || low.includes("bit_rate") || low.includes("width not divisible")) {
+          session.lastError = "Video encoder error: Video dimensions or parameters were incompatible. Please use default 720p (2500 Kbps) settings or select a standard MP4 video.";
+        } else if (low.includes("rtmp") || low.includes("handshake") || low.includes("end of file") || low.includes("connection") || low.includes("broken pipe") || low.includes("io error")) {
           session.lastError = "YouTube Live rejected connection: Invalid or inactive Stream Key. Please copy your active Stream Key from YouTube Studio (studio.youtube.com/channel/live) and ensure Live Streaming is enabled.";
         } else {
           session.lastError = `Stream failed: ${errorMsg}`;
