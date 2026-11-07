@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Clock } from 'lucide-react';
 import { Slot, VideoItem, UserProfile, BillingPeriod } from './types';
 import { BILLING_PLANS } from './config/billingPlans';
 import { PRESET_SAMPLE_VIDEOS } from './config/presetVideos';
@@ -75,9 +76,13 @@ const DEFAULT_INITIAL_SLOT: Slot = {
   videoId: 'vid-lofi-01',
 };
 
+// 10 minutes session inactivity timeout in milliseconds
+const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000;
+
 export default function App() {
   // Page Mode: 'app' (App Console), 'landing' (Public Marketing Website), or 'auth' (Dedicated Auth Page)
-  const [mode, setMode] = useState<'app' | 'landing' | 'auth'>('app');
+  // Requirement 1: Always open the home (landing) page first when software starts
+  const [mode, setMode] = useState<'app' | 'landing' | 'auth'>('landing');
 
   // App Console Subview
   const [currentView, setCurrentView] = useState<AppView>('dashboard');
@@ -91,19 +96,108 @@ export default function App() {
   const [isLiveMonitorOpen, setIsLiveMonitorOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
+  const [showInactivityModal, setShowInactivityModal] = useState(false);
+
+  // Inactivity tracking reference
+  const lastActivityRef = useRef<number>(Date.now());
 
   // MySQL Backend Database & Authentication status
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const [isAuthenticatedGoogle, setIsAuthenticatedGoogle] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    return Boolean(getStoredAuthToken());
+    const token = getStoredAuthToken();
+    if (!token) return false;
+    const lastActiveStr = localStorage.getItem('streamadda_last_active');
+    if (lastActiveStr) {
+      const lastActive = parseInt(lastActiveStr, 10);
+      if (Date.now() - lastActive >= INACTIVITY_TIMEOUT_MS) {
+        logoutUserSession();
+        localStorage.removeItem('streamadda_last_active');
+        return false;
+      }
+    }
+    return true;
   });
 
   // User Profile State
   const [user, setUser] = useState<UserProfile>(() => {
+    const token = getStoredAuthToken();
+    if (!token) return DEFAULT_USER;
+    const lastActiveStr = localStorage.getItem('streamadda_last_active');
+    if (lastActiveStr) {
+      const lastActive = parseInt(lastActiveStr, 10);
+      if (Date.now() - lastActive >= INACTIVITY_TIMEOUT_MS) {
+        return DEFAULT_USER;
+      }
+    }
     const saved = localStorage.getItem('streamadda_user');
     return saved ? JSON.parse(saved) : DEFAULT_USER;
   });
+
+  // Strict Dashboard Guard: Only open dashboard when user is logged in
+  useEffect(() => {
+    if (mode === 'app' && !isAuthenticated) {
+      setMode('landing');
+      setCurrentView('dashboard');
+    }
+  }, [mode, isAuthenticated]);
+
+  // Requirement 3: User auto-close / auto-logout if not used for 10 minutes
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    lastActivityRef.current = Date.now();
+    localStorage.setItem('streamadda_last_active', Date.now().toString());
+
+    let lastPersistedTime = Date.now();
+
+    const handleUserActivity = () => {
+      const now = Date.now();
+      lastActivityRef.current = now;
+      // Throttled persistence to localStorage every 10 seconds
+      if (now - lastPersistedTime > 10000) {
+        lastPersistedTime = now;
+        localStorage.setItem('streamadda_last_active', now.toString());
+      }
+    };
+
+    const events: (keyof WindowEventMap)[] = [
+      'mousemove',
+      'mousedown',
+      'keydown',
+      'touchstart',
+      'scroll',
+      'click',
+    ];
+
+    events.forEach((event) => {
+      window.addEventListener(event, handleUserActivity, { passive: true });
+    });
+
+    const checkInterval = setInterval(() => {
+      const now = Date.now();
+      if (now - lastActivityRef.current >= INACTIVITY_TIMEOUT_MS) {
+        // 10 minutes of inactivity reached: close user session & return to home page
+        logoutUserSession();
+        localStorage.removeItem('streamadda_last_active');
+        logOutUser().catch(() => {});
+        setIsAuthenticated(false);
+        setUser(DEFAULT_USER);
+        setVideos([]);
+        setSlots([]);
+        setMode('landing');
+        setCurrentView('dashboard');
+        setShowInactivityModal(true);
+      }
+    }, 5000);
+
+    return () => {
+      events.forEach((event) => {
+        window.removeEventListener(event, handleUserActivity);
+      });
+      clearInterval(checkInterval);
+    };
+  }, [isAuthenticated]);
 
   // Strict Admin Privilege: requires user to be actively authenticated AND have role === 'admin'
   const isAdmin = Boolean(isAuthenticated && user?.role === 'admin');
@@ -332,12 +426,15 @@ export default function App() {
   };
 
   const handleAuthSuccess = async (authedUser: UserProfile) => {
+    localStorage.setItem('streamadda_last_active', Date.now().toString());
+    lastActivityRef.current = Date.now();
     setUser(authedUser);
     setIsAuthenticated(true);
     setIsAuthModalOpen(false);
-    if (mode === 'auth') {
-      setMode('app');
-    }
+    setShowInactivityModal(false);
+    // Requirement 2: Open dashboard when user logs in
+    setMode('app');
+    setCurrentView('dashboard');
     if (authedUser.theme) {
       setIsDark(authedUser.theme === 'dark');
     }
@@ -374,6 +471,7 @@ export default function App() {
   const handleLogout = async () => {
     if (confirm('Do you want to log out of StreamAdda?')) {
       logoutUserSession();
+      localStorage.removeItem('streamadda_last_active');
       await logOutUser().catch(() => {});
       setUser(DEFAULT_USER);
       setIsAuthenticated(false);
@@ -680,7 +778,14 @@ export default function App() {
     return (
       <>
         <LandingPageView
-          onGoToDashboard={() => setMode('app')}
+          onGoToDashboard={() => {
+            if (isAuthenticated) {
+              setMode('app');
+              setCurrentView('dashboard');
+            } else {
+              handleOpenAuth('login');
+            }
+          }}
           onOpenContact={() => setIsContactOpen(true)}
           onOpenAuth={(authMode) => handleOpenAuth(authMode || 'login')}
           isAuthenticated={isAuthenticated}
@@ -697,6 +802,40 @@ export default function App() {
           onClose={() => setIsAuthModalOpen(false)}
           onAuthSuccess={handleAuthSuccess}
         />
+
+        {/* Inactivity Auto-Close Notification Modal */}
+        {showInactivityModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-center flex flex-col items-center gap-4">
+              <div className="w-14 h-14 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+                <Clock className="w-7 h-7" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                  Session Closed
+                </h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                  Your session was automatically closed due to 10 minutes of inactivity. Please sign in again to access your dashboard.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowInactivityModal(false);
+                  handleOpenAuth('login');
+                }}
+                className="w-full py-2.5 px-4 bg-[#6320ee] hover:bg-[#5218cc] text-white font-semibold text-sm rounded-xl transition-colors cursor-pointer shadow-md"
+              >
+                Sign In Again
+              </button>
+              <button
+                onClick={() => setShowInactivityModal(false)}
+                className="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-medium transition-colors cursor-pointer"
+              >
+                Continue to Home
+              </button>
+            </div>
+          </div>
+        )}
       </>
     );
   }

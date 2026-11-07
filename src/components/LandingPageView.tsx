@@ -124,20 +124,16 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
             <div className="flex items-center gap-2.5">
               <button
                 onClick={onGoToDashboard}
-                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-left"
-                title="Go to App Console"
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#6320ee] hover:bg-[#5218cc] text-white shadow-xs transition-all cursor-pointer text-left"
+                title="Go to App Dashboard"
               >
-                <div className="w-8 h-8 rounded-full bg-[#004b87] text-white font-semibold text-xs flex items-center justify-center ring-2 ring-[#6320ee]/30 shadow-xs">
+                <div className="w-6 h-6 rounded-full bg-white/20 text-white font-bold text-xs flex items-center justify-center">
                   {user.avatarInitials || (user.name ? user.name.charAt(0) : 'U')}
                 </div>
-                <div className="hidden sm:flex flex-col">
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                    {user.name ? user.name.split(' ')[0] : 'User'}
-                  </span>
-                  <span className="text-[10px] text-slate-400 capitalize">
-                    {user.role || 'user'}
-                  </span>
-                </div>
+                <span className="text-xs font-bold">
+                  Dashboard
+                </span>
+                <ArrowRight className="w-3.5 h-3.5" />
               </button>
 
               {onLogout && (
@@ -147,7 +143,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                   title="Log out of account"
                 >
                   <LogOut className="w-3.5 h-3.5" />
-                  <span>Logout</span>
+                  <span className="hidden sm:inline">Logout</span>
                 </button>
               )}
             </div>
@@ -207,10 +203,10 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
 
             <div className="pt-4">
               <button
-                onClick={() => (onOpenAuth ? onOpenAuth('register') : onGoToDashboard())}
+                onClick={() => (isAuthenticated ? onGoToDashboard() : onOpenAuth ? onOpenAuth('register') : onGoToDashboard())}
                 className="px-8 py-4 rounded-full text-base font-bold text-[#5b21b6] bg-white hover:bg-purple-50 shadow-xl hover:scale-105 active:scale-95 transition-all cursor-pointer"
               >
-                Get Started Now
+                {isAuthenticated ? 'Open Dashboard' : 'Get Started Now'}
               </button>
             </div>
           </div>
@@ -229,7 +225,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
             <div className="flex items-start justify-center gap-6 sm:gap-8 w-full">
               {/* Step 1 */}
               <button
-                onClick={() => (onOpenAuth ? onOpenAuth('register') : onGoToDashboard())}
+                onClick={() => (isAuthenticated ? onGoToDashboard() : onOpenAuth ? onOpenAuth('register') : onGoToDashboard())}
                 className="flex flex-col items-center gap-3 max-w-[110px] text-center cursor-pointer group hover:scale-105 transition-transform"
               >
                 <div className="w-16 h-16 rounded-full bg-white/15 backdrop-blur-xs border border-white/20 flex items-center justify-center text-white shadow-inner group-hover:bg-white/25 transition-colors">
@@ -477,14 +473,14 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
 
                   <div className="pt-6">
                     <button
-                      onClick={() => (onOpenAuth ? onOpenAuth('register') : onGoToDashboard())}
+                      onClick={() => (isAuthenticated ? onGoToDashboard() : onOpenAuth ? onOpenAuth('register') : onGoToDashboard())}
                       className={`w-full py-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                         isPopular
                           ? 'bg-[#6320ee] text-white hover:bg-[#5218cc] shadow-xs'
                           : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white hover:bg-slate-200 dark:hover:bg-slate-700'
                       }`}
                     >
-                      Choose Plan
+                      {isAuthenticated ? 'Select Plan' : 'Choose Plan'}
                     </button>
                   </div>
                 </div>
