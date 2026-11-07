@@ -103,34 +103,65 @@ export async function testStreamKeyHandshake(
   }
 }
 
-export async function uploadVideoToServer(file: File): Promise<{
+export async function uploadVideoToServer(
+  file: File,
+  onProgress?: (percent: number, loadedBytes: number, totalBytes: number) => void
+): Promise<{
   success: boolean;
   url?: string;
   videoPath?: string;
   size?: number;
   error?: string;
 }> {
-  try {
-    const formData = new FormData();
-    formData.append('video', file);
+  return new Promise((resolve) => {
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/videos/upload');
 
-    const res = await fetch('/api/videos/upload', {
-      method: 'POST',
-      body: formData,
-    });
+      const token = localStorage.getItem('streamadda_auth_token');
+      if (token) {
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      }
 
-    const contentType = res.headers.get('content-type') || '';
-    if (!contentType.includes('application/json')) {
-      const text = await res.text();
-      const cleanSnippet = text.replace(/<[^>]+>/g, ' ').trim().slice(0, 150);
-      throw new Error(cleanSnippet || `Server returned HTTP ${res.status}`);
+      if (xhr.upload && onProgress) {
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable && e.total > 0) {
+            const percent = Math.min(99, Math.round((e.loaded / e.total) * 100));
+            onProgress(percent, e.loaded, e.total);
+          }
+        };
+      }
+
+      xhr.onload = () => {
+        try {
+          const contentType = xhr.getResponseHeader('content-type') || '';
+          if (!contentType.includes('application/json')) {
+            const cleanSnippet = (xhr.responseText || '').replace(/<[^>]+>/g, ' ').trim().slice(0, 150);
+            resolve({ success: false, error: cleanSnippet || `Server returned HTTP ${xhr.status}` });
+            return;
+          }
+          const data = JSON.parse(xhr.responseText);
+          if (xhr.status >= 200 && xhr.status < 300) {
+            if (onProgress) onProgress(100, file.size, file.size);
+            resolve(data);
+          } else {
+            resolve({ success: false, error: data.error || 'Video upload failed' });
+          }
+        } catch (err: any) {
+          resolve({ success: false, error: err.message || 'Failed to parse server response' });
+        }
+      };
+
+      xhr.onerror = () => {
+        resolve({ success: false, error: 'Network error occurred during video upload' });
+      };
+
+      const formData = new FormData();
+      formData.append('video', file);
+      xhr.send(formData);
+    } catch (err: any) {
+      console.error('Server video upload error:', err);
+      resolve({ success: false, error: err.message });
     }
-
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Video upload failed');
-    return data;
-  } catch (err: any) {
-    console.error('Server video upload error:', err);
-    return { success: false, error: err.message };
-  }
+  });
 }

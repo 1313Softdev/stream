@@ -42,6 +42,7 @@ export const VideosView: React.FC<VideosViewProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [processingStage, setProcessingStage] = useState<string>('Processing video & generating live snapshot...');
   const [filePreviewData, setFilePreviewData] = useState<{
     duration: string;
     resolution: string;
@@ -85,21 +86,23 @@ export const VideosView: React.FC<VideosViewProps> = ({
     }
 
     setIsProcessing(true);
-    setUploadProgress(15);
+    setProcessingStage('Analyzing video & generating live snapshot...');
+    setUploadProgress(20);
 
     try {
       // Extract video duration, resolution, thumbnail
       const meta = await extractVideoMetadata(file);
       setFilePreviewData(meta);
-      setUploadProgress(60);
+      setUploadProgress(100);
 
       setTimeout(() => {
-        setUploadProgress(100);
         setIsProcessing(false);
-      }, 400);
+        setUploadProgress(0);
+      }, 350);
     } catch (err) {
       console.warn('Metadata extraction fallback:', err);
       setIsProcessing(false);
+      setUploadProgress(0);
     }
   };
 
@@ -108,6 +111,8 @@ export const VideosView: React.FC<VideosViewProps> = ({
     if (!customTitle.trim()) return;
 
     setIsProcessing(true);
+    setUploadProgress(0);
+    setProcessingStage('Preparing video upload...');
     const videoId = `vid-${Date.now()}`;
 
     let videoUrl = customUrl.trim();
@@ -124,16 +129,29 @@ export const VideosView: React.FC<VideosViewProps> = ({
       const sizeMB = sizeBytes / (1024 * 1024);
       sizeFormatted = sizeMB >= 1000 ? `${(sizeMB / 1024).toFixed(1)} GB` : `${Math.round(sizeMB)} MB`;
 
+      setProcessingStage(`Uploading video (${sizeFormatted})...`);
+
       // Upload directly to server so 24/7 cloud FFmpeg can stream the actual file
       try {
-        const uploadResult = await uploadVideoToServer(selectedFile);
+        const uploadResult = await uploadVideoToServer(selectedFile, (percent, loadedBytes, totalBytes) => {
+          setUploadProgress(percent);
+          const loadedMB = (loadedBytes / (1024 * 1024)).toFixed(1);
+          const totalMB = (totalBytes / (1024 * 1024)).toFixed(1);
+          setProcessingStage(`Uploading: ${loadedMB} MB / ${totalMB} MB (${percent}%)`);
+        });
+
         if (uploadResult.success && uploadResult.videoPath) {
           videoPath = uploadResult.videoPath;
           videoUrl = uploadResult.url || videoUrl;
+        } else if (uploadResult.error) {
+          throw new Error(uploadResult.error);
         }
-      } catch (err) {
-        console.warn('Server storage fallback:', err);
+      } catch (err: any) {
+        console.warn('Server storage warning:', err);
       }
+
+      setProcessingStage('Finalizing and saving to library...');
+      setUploadProgress(100);
 
       // Store in browser local media vault
       const blobUrl = await storeLocalVideoBlob(videoId, selectedFile);
@@ -495,19 +513,19 @@ export const VideosView: React.FC<VideosViewProps> = ({
                   )}
                 </div>
 
-                {/* Progress bar if analyzing */}
+                {/* Progress bar if analyzing or uploading */}
                 {isProcessing && (
-                  <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-900/60">
+                  <div className="flex flex-col gap-1.5 p-3 rounded-xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800/80 shadow-xs animate-in fade-in">
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-semibold text-[#6320ee] dark:text-[#a855f7] flex items-center gap-2">
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        Processing video & generating live snapshot...
+                        <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                        <span>{processingStage}</span>
                       </span>
-                      <span className="font-mono text-slate-500">{uploadProgress}%</span>
+                      <span className="font-mono font-bold text-[#6320ee] dark:text-[#a855f7] shrink-0 ml-2">{uploadProgress}%</span>
                     </div>
-                    <div className="w-full h-1.5 bg-purple-200 dark:bg-purple-900 rounded-full overflow-hidden">
+                    <div className="w-full h-2 bg-purple-200/70 dark:bg-purple-900/60 rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-[#6320ee] rounded-full transition-all duration-200"
+                        className="h-full bg-[#6320ee] rounded-full transition-all duration-150 ease-out"
                         style={{ width: `${uploadProgress}%` }}
                       />
                     </div>
