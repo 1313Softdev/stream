@@ -103,7 +103,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   // 2. Settings & SEO State
   const [settings, setSettings] = useState<SiteMetaSettings>({
-    site_title: 'StreamAdda - 24/7 Cloud Live Streaming for Creators',
+    site_title: 'Stream LIVE - 24/7 Cloud Live Streaming for Creators',
     meta_description: 'Stream your Pre-Recorded videos 24x7 nonstop to YouTube, Facebook, Twitch with cloud RTMP servers.',
     meta_keywords: 'live streaming, 24/7 stream, youtube live, rtmp streaming',
     og_image: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=1200&auto=format&fit=crop&q=80',
@@ -873,7 +873,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 value={settings.site_title || ''}
                 onChange={(e) => setSettings({ ...settings, site_title: e.target.value })}
                 className="w-full px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800/60 border rounded-xl"
-                placeholder="StreamAdda - 24/7 Cloud Live Streaming"
+                placeholder="Stream LIVE - 24/7 Cloud Live Streaming"
               />
             </div>
 
@@ -964,7 +964,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   {settings.canonical_url || 'https://streamadda.com'}
                 </span>
                 <span className="text-sm font-semibold text-blue-700 dark:text-blue-400 hover:underline cursor-pointer truncate">
-                  {settings.site_title || 'StreamAdda'}
+                  {settings.site_title || 'Stream LIVE'}
                 </span>
                 <p className="text-[11px] text-slate-600 dark:text-slate-300 line-clamp-2">
                   {settings.meta_description || 'Stream your Pre-Recorded videos 24x7 nonstop...'}
@@ -1346,7 +1346,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   type="text"
                   value={gatewayForm.merchantName || ''}
                   onChange={(e) => setGatewayForm({ ...gatewayForm, merchantName: e.target.value })}
-                  placeholder="e.g. StreamAdda Live Services"
+                  placeholder="e.g. Stream LIVE Services"
                   className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border rounded-xl"
                 />
               </div>
@@ -1399,7 +1399,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             {gatewayForm.upiId && (
               <div className="flex items-center gap-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border">
                 <img
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(`upi://pay?pa=${gatewayForm.upiId}&pn=${encodeURIComponent(gatewayForm.merchantName || 'StreamAdda')}&cu=INR`)}`}
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(`upi://pay?pa=${gatewayForm.upiId}&pn=${encodeURIComponent(gatewayForm.merchantName || 'Stream LIVE')}&cu=INR`)}`}
                   alt="Dynamic QR"
                   className="w-20 h-20 rounded-lg bg-white p-1"
                 />

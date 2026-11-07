@@ -988,7 +988,7 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
                   <div className="p-2 rounded bg-white/70 dark:bg-slate-900/70 border border-amber-200/40 dark:border-amber-900/40">
                     <strong className="text-slate-900 dark:text-white font-semibold">2. Stream URL Format:</strong>
                     <p className="text-slate-600 dark:text-slate-400 mt-0.5">
-                      Standard RTMP (Port 1935) is often blocked by corporate/cloud firewalls. StreamAdda automatically streams via <strong>rtmps://a.rtmp.youtube.com/live2:443</strong> (secure TLS over port 443), guaranteed to connect.
+                      Standard RTMP (Port 1935) is often blocked by corporate/cloud firewalls. Stream LIVE automatically streams via <strong>rtmps://a.rtmp.youtube.com/live2:443</strong> (secure TLS over port 443), guaranteed to connect.
                     </p>
                   </div>
                   <div className="p-2 rounded bg-white/70 dark:bg-slate-900/70 border border-amber-200/40 dark:border-amber-900/40">

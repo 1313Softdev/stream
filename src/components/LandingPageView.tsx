@@ -67,10 +67,10 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
   const faqs = [
     {
       q: 'Do I need to keep my computer or phone turned on while streaming?',
-      a: 'No! StreamAdda runs 100% in our cloud servers. Once you click "Start Stream", our high-speed cloud nodes handle the RTMP broadcast continuously 24 hours a day, 7 days a week, even if your device is turned off or offline.',
+      a: 'No! Stream LIVE runs 100% in our cloud servers. Once you click "Start Stream", our high-speed cloud nodes handle the RTMP broadcast continuously 24 hours a day, 7 days a week, even if your device is turned off or offline.',
     },
     {
-      q: 'Does StreamAdda require my YouTube password or Google login?',
+      q: 'Does Stream LIVE require my YouTube password or Google login?',
       a: 'Never! We strictly use the standard RTMP stream key method. You only paste your YouTube Live Stream Key, which guarantees 100% security for your channel.',
     },
     {
@@ -78,8 +78,8 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
       a: 'Yes! With our "Stream Loop" feature enabled, your video will seamlessly restart and loop continuously with zero delay or downtime until you decide to stop it or reach your end schedule.',
     },
     {
-      q: 'What resolution and bitrate does StreamAdda support?',
-      a: 'StreamAdda streams in crystal-clear Full HD 1080p at 60fps with up to 6000 kbps bitrates, ensuring your stream is recommended across YouTube browse features and suggested videos.',
+      q: 'What resolution and bitrate does Stream LIVE support?',
+      a: 'Stream LIVE streams in crystal-clear Full HD 1080p at 60fps with up to 6000 kbps bitrates, ensuring your stream is recommended across YouTube browse features and suggested videos.',
     },
     {
       q: 'Which streaming platforms are supported?',
@@ -263,13 +263,13 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
         </div>
       </section>
 
-      {/* How does StreamAdda work? Section matching Screenshot 8 */}
+      {/* How does Stream LIVE work? Section matching Screenshot 8 */}
       <section id="how-it-works" className="px-6 sm:px-12 lg:px-20 py-20 bg-slate-50/60 dark:bg-slate-900/40">
         <div className="max-w-7xl mx-auto flex flex-col gap-12">
           {/* Section Heading */}
           <div className="text-center">
             <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white">
-              How does <span className="text-[#6320ee] dark:text-[#a855f7]">StreamAdda</span> work?
+              How does <span className="text-[#6320ee] dark:text-[#a855f7]">Stream <span className="text-red-600">LIVE</span></span> work?
             </h2>
           </div>
 
@@ -296,7 +296,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                     Grow
                   </h4>
                   <p className="text-sm text-purple-100 leading-relaxed">
-                    Unlock the true potential of your videos with StreamAdda and our automatic loop video streaming system. Use our easy and user-friendly video upload features to supercharge your reach.
+                    Unlock the true potential of your videos with Stream LIVE and our automatic loop video streaming system. Use our easy and user-friendly video upload features to supercharge your reach.
                   </p>
                 </div>
 
@@ -305,7 +305,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                     Earn More
                   </h4>
                   <p className="text-sm text-purple-100 leading-relaxed">
-                    Join StreamAdda and stay ahead of the social media streaming game. Get help from our expert to build a stable, sustainable & scalable business.
+                    Join Stream LIVE and stay ahead of the social media streaming game. Get help from our expert to build a stable, sustainable & scalable business.
                   </p>
                 </div>
               </div>
@@ -322,7 +322,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                       <span className="text-xs font-bold leading-tight truncate">
                         How To Setup Youtube 24x7 Livestream
                       </span>
-                      <span className="text-[10px] text-slate-300">StreamAdda</span>
+                      <span className="text-[10px] text-slate-300">Stream LIVE</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
@@ -498,7 +498,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               Frequently Asked Questions
             </h2>
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
-              Everything you need to know about 24/7 cloud live streaming with StreamAdda.
+              Everything you need to know about 24/7 cloud live streaming with Stream LIVE.
             </p>
           </div>
 
@@ -538,9 +538,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
         <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-12 gap-10">
           {/* Col 1: Brand & Description */}
           <div className="md:col-span-6 flex flex-col gap-4">
-            <h3 className="text-2xl font-bold tracking-tight text-white">
-              StreamAdda
-            </h3>
+            <img src="/logo.png" alt="Stream LIVE" className="h-10 object-contain w-fit" />
             <p className="text-sm text-purple-100 max-w-md leading-relaxed">
               The Best Professional Pre-Recorded Video Live Streaming Platform. Stream your Pre-Recorded videos 24x7 & get more Suggested and Browse feature video views.
             </p>
@@ -580,7 +578,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
         </div>
 
         <div className="max-w-7xl mx-auto pt-10 mt-10 border-t border-purple-400/20 text-xs text-purple-200 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p>© 2026 StreamAdda. All rights reserved.</p>
+          <p>© 2026 Stream LIVE. All rights reserved.</p>
           <p>Continuous 24x7 RTMP Cloud Video Streaming for Creators.</p>
         </div>
       </footer>

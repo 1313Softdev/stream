@@ -83,7 +83,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={onSwitchToLanding}
           className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-[#6320ee] dark:hover:text-[#a855f7] border border-slate-200 dark:border-slate-700 rounded-md hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-          title="Switch to public StreamAdda home page"
+          title="Switch to public Stream LIVE home page"
         >
           <Globe className="w-3.5 h-3.5" />
           <span>Home Page</span>

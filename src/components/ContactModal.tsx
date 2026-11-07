@@ -30,7 +30,7 @@ export const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) =
         <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
           <div>
             <h3 className="text-xl font-bold text-slate-900 dark:text-white">
-              Contact StreamAdda Support
+              Contact Stream LIVE Support
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
               We are available 24/7 to resolve streaming or slot billing issues.
@@ -65,7 +65,7 @@ export const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) =
                   <Mail className="w-3.5 h-3.5 text-[#6320ee]" /> Email Support
                 </span>
                 <span className="font-semibold text-slate-900 dark:text-white select-all">
-                  support@streamadda.com
+                  support@streamlive.com
                 </span>
               </div>
 

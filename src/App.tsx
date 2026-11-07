@@ -469,7 +469,7 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    if (confirm('Do you want to log out of StreamAdda?')) {
+    if (confirm('Do you want to log out of Stream LIVE?')) {
       logoutUserSession();
       localStorage.removeItem('streamadda_last_active');
       await logOutUser().catch(() => {});

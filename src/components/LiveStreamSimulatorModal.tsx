@@ -418,7 +418,7 @@ export const LiveStreamSimulatorModal: React.FC<LiveStreamSimulatorModalProps> =
                             ? 'text-red-400 font-bold'
                             : log.includes('bitrate=')
                             ? 'text-emerald-300'
-                            : log.includes('StreamAdda')
+                            : log.includes('Stream LIVE') || log.includes('StreamAdda')
                             ? 'text-purple-300'
                             : 'text-slate-400'
                         }`}

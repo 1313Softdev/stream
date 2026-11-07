@@ -24,7 +24,7 @@ export const TutorialModal: React.FC<TutorialModalProps> = ({
     {
       num: '02',
       title: 'Upload your Pre-Recorded Video',
-      desc: 'Go to the Videos tab in StreamAdda and upload your MP4 video (up to 2GB) or choose one of our copyright-free 24/7 stream loops.',
+      desc: 'Go to the Videos tab in Stream LIVE and upload your MP4 video (up to 2GB) or choose one of our copyright-free 24/7 stream loops.',
       icon: Upload,
     },
     {
@@ -51,7 +51,7 @@ export const TutorialModal: React.FC<TutorialModalProps> = ({
               How to Stream 24/7 on YouTube
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Step-by-step tutorial to broadcast pre-recorded videos with StreamAdda.
+              Step-by-step tutorial to broadcast pre-recorded videos with Stream LIVE.
             </p>
           </div>
           <button

@@ -72,8 +72,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               name: 'UPI Dynamic QR & Intent',
               isEnabled: true,
               mode: 'manual',
-              upiId: 'streamadda@upi',
-              merchantName: 'StreamAdda Live',
+              upiId: 'streamlive@upi',
+              merchantName: 'Stream LIVE',
               autoVerify: false,
             },
           ]);
@@ -86,15 +86,15 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const currentGateway = gateways.find((g) => g.id === selectedGatewayId) || gateways[0] || {
     id: 'upi',
     name: 'UPI QR',
-    upiId: 'streamadda@upi',
-    merchantName: 'StreamAdda Live',
+    upiId: 'streamlive@upi',
+    merchantName: 'Stream LIVE',
     mode: 'manual',
     autoVerify: false,
   };
 
-  const cleanUpiId = currentGateway.upiId || 'streamadda@upi';
-  const cleanMerchant = currentGateway.merchantName || 'StreamAdda Live';
-  const upiIntentUrl = `upi://pay?pa=${encodeURIComponent(cleanUpiId)}&pn=${encodeURIComponent(cleanMerchant)}&am=${amount}&cu=INR&tn=${encodeURIComponent(`StreamAdda ${planTitle}`)}`;
+  const cleanUpiId = currentGateway.upiId || 'streamlive@upi';
+  const cleanMerchant = currentGateway.merchantName || 'Stream LIVE';
+  const upiIntentUrl = `upi://pay?pa=${encodeURIComponent(cleanUpiId)}&pn=${encodeURIComponent(cleanMerchant)}&am=${amount}&cu=INR&tn=${encodeURIComponent(`Stream LIVE ${planTitle}`)}`;
   const qrCodeUrl = currentGateway.qrCodeImageUrl || `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(upiIntentUrl)}`;
 
   const handleCopyUpi = () => {

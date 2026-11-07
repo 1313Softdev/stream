@@ -1608,7 +1608,7 @@ app.post("/api/stream/start", async (req, res) => {
   const targetUrl = getIngestUrl(platform, cleanedKey, customRtmpUrl);
   const videoDisplayName = resolvedVideo.startsWith("http") ? resolvedVideo : path.basename(resolvedVideo);
   const logs = [];
-  logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] StreamAdda 24/7 Cloud Worker initiating live stream for slot ${slotId}`);
+  logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Stream LIVE 24/7 Cloud Worker initiating live stream for slot ${slotId}`);
   logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Platform: ${platform} | Destination: ${targetUrl.replace(cleanedKey, "***" + cleanedKey.slice(-4))}`);
   logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Real Video source: ${videoDisplayName} (24/7 infinite loop active)`);
   logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Target Quality: ${bitrateNum} Kbps CBR @ ${fpsNum} FPS | Audio: ${audioBitrateNum} Kbps AAC Stereo`);
@@ -2688,7 +2688,7 @@ async function startServer() {
     app.use(vite.middlewares);
   }
   app.listen(port, () => {
-    console.log(`StreamAdda Full-Stack Server running on port ${port}`);
+    console.log(`Stream LIVE Full-Stack Server running on port ${port}`);
   });
 }
 startServer().catch(console.error);

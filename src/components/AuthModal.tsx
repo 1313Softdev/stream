@@ -123,13 +123,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-3xl max-w-md w-full overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 transition-colors">
         {/* Header */}
         <div className="p-6 pb-4 flex items-center justify-between border-b border-slate-100 dark:border-slate-800">
-          <div className="flex items-center gap-2.5">
-            <PantherLogo className="w-8 h-8" />
+          <div className="flex items-center gap-3">
+            <img src="/logo-icon.png" alt="Stream LIVE" className="w-10 h-10 object-contain shrink-0 drop-shadow-sm" />
             <div>
-              <span className="font-extrabold text-base tracking-tight text-slate-900 dark:text-white">
-                Stream<span className="text-[#6320ee] dark:text-[#a855f7]">Adda</span>
-              </span>
-              <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+              <div className="flex items-center gap-1.5 leading-none">
+                <span className="font-extrabold text-lg tracking-tight text-slate-900 dark:text-white">
+                  Stream
+                </span>
+                <span className="px-1.5 py-0.5 text-xs font-black text-white bg-red-600 rounded-sm shadow-xs uppercase tracking-wider">
+                  LIVE
+                </span>
+              </div>
+              <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mt-1">
                 {mode === 'login' ? 'Sign In to Your Account' : 'Create a New Account'}
               </span>
             </div>

@@ -369,7 +369,7 @@ export const VideosView: React.FC<VideosViewProps> = ({
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-bold text-slate-900 dark:text-white">
-                  Add Video to StreamAdda
+                  Add Video to Stream LIVE
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                   Upload MP4/MOV videos or pick from ready-to-stream 24/7 video loops.

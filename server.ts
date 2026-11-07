@@ -322,7 +322,7 @@ app.post('/api/stream/start', async (req, res) => {
 
   const videoDisplayName = resolvedVideo.startsWith('http') ? resolvedVideo : path.basename(resolvedVideo);
   const logs: string[] = [];
-  logs.push(`[${new Date().toLocaleTimeString()}] StreamAdda 24/7 Cloud Worker initiating live stream for slot ${slotId}`);
+  logs.push(`[${new Date().toLocaleTimeString()}] Stream LIVE 24/7 Cloud Worker initiating live stream for slot ${slotId}`);
   logs.push(`[${new Date().toLocaleTimeString()}] Platform: ${platform} | Destination: ${targetUrl.replace(cleanedKey, '***' + cleanedKey.slice(-4))}`);
   logs.push(`[${new Date().toLocaleTimeString()}] Real Video source: ${videoDisplayName} (24/7 infinite loop active)`);
   logs.push(`[${new Date().toLocaleTimeString()}] Target Quality: ${bitrateNum} Kbps CBR @ ${fpsNum} FPS | Audio: ${audioBitrateNum} Kbps AAC Stereo`);
@@ -1543,7 +1543,7 @@ async function startServer() {
   }
 
   app.listen(port, () => {
-    console.log(`StreamAdda Full-Stack Server running on port ${port}`);
+    console.log(`Stream LIVE Full-Stack Server running on port ${port}`);
   });
 }
 
