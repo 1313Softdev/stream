@@ -425,7 +425,16 @@ app.post('/api/stream/start', async (req, res) => {
       if (session.logs.length > 100) session.logs.shift();
       session.logs.push(line);
 
-      // Parse FFmpeg progress
+      const lower = line.toLowerCase();
+      if (
+        lower.includes('error') ||
+        lower.includes('failed') ||
+        lower.includes('handshake') ||
+        lower.includes('rejected') ||
+        lower.includes('broken pipe')
+      ) {
+        console.error(`[Slot ${slotId}] FFmpeg stderr:`, line);
+      }
       // Example: frame=  120 fps= 30 q=24.0 size=    1024kB time=00:00:04.00 bitrate=1048.5kbits/s speed=1.0x
       if (line.includes('frame=') && line.includes('bitrate=')) {
         session.status = 'live';
@@ -445,7 +454,6 @@ app.post('/api/stream/start', async (req, res) => {
       }
 
       // Check for errors
-      const lower = line.toLowerCase();
       if (
         lower.includes('error while opening encoder') ||
         lower.includes('error initializing output stream') ||

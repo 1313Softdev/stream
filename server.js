@@ -1772,6 +1772,10 @@ app.post("/api/stream/start", async (req, res) => {
     for (const line of lines) {
       if (session.logs.length > 100) session.logs.shift();
       session.logs.push(line);
+      const lower = line.toLowerCase();
+      if (lower.includes("error") || lower.includes("failed") || lower.includes("handshake") || lower.includes("rejected") || lower.includes("broken pipe")) {
+        console.error(`[Slot ${slotId}] FFmpeg stderr:`, line);
+      }
       if (line.includes("frame=") && line.includes("bitrate=")) {
         session.status = "live";
         session.lastError = void 0;
@@ -1786,7 +1790,6 @@ app.post("/api/stream/start", async (req, res) => {
         if (speedMatch) session.lastStats.speed = speedMatch[1];
         if (timeMatch) session.lastStats.time = timeMatch[1];
       }
-      const lower = line.toLowerCase();
       if (lower.includes("error while opening encoder") || lower.includes("error initializing output stream") || lower.includes("width not divisible by 2") || lower.includes("height not divisible by 2") || lower.includes("incorrect parameters such as bit_rate")) {
         session.status = "error";
         session.lastError = "Video encoder error: Video dimensions or parameters were incompatible. Please use default 720p (2500 Kbps) settings or select a standard MP4 video.";
