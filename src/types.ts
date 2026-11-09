@@ -1,4 +1,4 @@
-export type SlotStatus = 'active' | 'expired' | 'inactive';
+export type SlotStatus = 'active' | 'expired' | 'inactive' | 'pending_approval';
 export type StreamStatus = 'Off' | 'Live' | 'Scheduled';
 export type StreamingPlatform = 'YouTube' | 'Facebook' | 'Twitch' | 'Custom RTMP';
 
@@ -30,6 +30,10 @@ export interface Slot {
   streamLoop: boolean;
   autoStartOnKeyUpdate?: boolean;
   rtmpServerUrl?: string;
+  // Subscription & Payment approval
+  subscriptionPlanId?: string;
+  paymentStatus?: 'pending' | 'approved' | 'rejected';
+  pendingUtrNumber?: string;
   // Schedule Stream Start options
   scheduleStartEnabled?: boolean;
   streamStartTime?: string;

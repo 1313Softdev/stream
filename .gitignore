@@ -10,5 +10,5 @@ coverage/
 .env.production
 env.txt
 !.env.example
-public/uploads/*.mp4
+public/uploads/*
 !public/uploads/.gitkeep

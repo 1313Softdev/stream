@@ -40,19 +40,37 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Streaming Alert Banner if active */}
       {streamingSlots.length > 0 ? (
-        <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 flex items-center justify-between">
+        <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <span className="relative flex h-3 w-3">
+            <span className="relative flex h-3 w-3 shrink-0">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
             </span>
-            <span className="text-sm font-semibold text-emerald-900 dark:text-emerald-200">
-              Live Stream in progress: {streamingSlots[0].name} ({streamingSlots[0].platform})
-            </span>
+            <div className="flex flex-col">
+              <span className="text-sm font-bold text-emerald-900 dark:text-emerald-200">
+                {streamingSlots.length === 1
+                  ? `Live Stream in progress: ${streamingSlots[0].name} (${streamingSlots[0].platform})`
+                  : `${streamingSlots.length} Simultaneous Live Streams Active:`}
+              </span>
+              {streamingSlots.length > 1 && (
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  {streamingSlots.map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => onSelectSlot(s)}
+                      className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 font-medium hover:underline cursor-pointer flex items-center gap-1.5"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      <span>{s.name} ({s.platform})</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           <button
             onClick={() => onSelectSlot(streamingSlots[0])}
-            className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-md transition-colors cursor-pointer"
+            className="px-3.5 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-md transition-colors cursor-pointer self-start sm:self-auto shrink-0"
           >
             Open Stream Monitor
           </button>
@@ -163,7 +181,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* Quick Launch & Slot Details shortcut */}
-      {slots.length > 0 && (
+      {slots.length > 0 ? (
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex flex-col gap-1">
             <h4 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -193,6 +211,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               Add / Renew Slots
             </button>
           </div>
+        </div>
+      ) : (
+        <div className="bg-gradient-to-r from-purple-500/10 via-[#6320ee]/10 to-indigo-500/10 p-8 rounded-2xl border border-[#6320ee]/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 animate-in fade-in">
+          <div className="flex flex-col gap-1.5">
+            <h4 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <Radio className="w-5 h-5 text-[#6320ee]" />
+              <span>No Active Slots Yet</span>
+            </h4>
+            <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xl">
+              To broadcast 24/7 continuous loops on YouTube, Facebook, or Twitch, subscribe to a cloud streaming slot. No free trials — every slot is provisioned on dedicated high-speed cloud infrastructure upon payment approval.
+            </p>
+          </div>
+          <button
+            onClick={() => onNavigate('live-slots')}
+            className="px-5 py-2.5 text-xs font-bold text-white bg-[#6320ee] hover:bg-[#5218cc] rounded-xl shadow-md cursor-pointer transition-all flex items-center gap-2 shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Get Your First Slot</span>
+          </button>
         </div>
       )}
     </div>

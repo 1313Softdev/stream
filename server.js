@@ -49,15 +49,92 @@ var memoryFallback = {
         phoneCode: "+91",
         theme: "light"
       }
+    ],
+    [
+      "usr_demo_creator",
+      {
+        id: "usr_demo_creator",
+        name: "Gurpreet Singh",
+        email: "gurpreet.streamer@gmail.com",
+        role: "user",
+        status: "active",
+        storageQuotaBytes: 10737418240,
+        storageUsedBytes: 0,
+        avatarInitials: "G",
+        country: "India",
+        city: "Chandigarh",
+        phone: "98765 43210",
+        phoneCode: "+91",
+        theme: "light"
+      }
     ]
   ]),
-  slots: /* @__PURE__ */ new Map(),
+  slots: /* @__PURE__ */ new Map([
+    [
+      "slot_demo_101",
+      {
+        id: "slot_demo_101",
+        userId: "usr_demo_creator",
+        name: "Slot 1794208421804",
+        status: "pending_approval",
+        paymentStatus: "pending",
+        streamStatus: "Off",
+        platform: "YouTube",
+        streamKey: "",
+        streamLoop: true,
+        autoStartOnKeyUpdate: true,
+        expiresAt: Date.now() + 864e5,
+        expireOn: "Tomorrow - 11:59 PM"
+      }
+    ]
+  ]),
   videos: /* @__PURE__ */ new Map(),
   orders: [],
   settings: /* @__PURE__ */ new Map(),
   paymentGateways: /* @__PURE__ */ new Map(),
   subscriptionPlans: /* @__PURE__ */ new Map(),
-  paymentTransactions: /* @__PURE__ */ new Map()
+  paymentTransactions: /* @__PURE__ */ new Map([
+    [
+      "tx_sample_101",
+      {
+        id: "tx_sample_101",
+        userId: "usr_demo_creator",
+        userName: "Gurpreet Singh",
+        userEmail: "gurpreet.streamer@gmail.com",
+        planId: "Months",
+        slotId: "slot_demo_101",
+        amount: 799,
+        currency: "INR",
+        gatewayType: "upi",
+        utrNumber: "431289567104",
+        proofImageUrl: null,
+        status: "pending",
+        adminNote: "Awaiting Admin UTR verification & slot activation",
+        createdAt: new Date(Date.now() - 18e5).toISOString()
+      }
+    ],
+    [
+      "tx_sample_102",
+      {
+        id: "tx_sample_102",
+        userId: "6ae0fd7c4863791bef736a0a",
+        userName: "Satnam Singh (British Punjabi TV)",
+        userEmail: "britishpunjabitv13@gmail.com",
+        planId: "Quarterly",
+        slotId: "slot-1",
+        amount: 1999,
+        currency: "INR",
+        gatewayType: "upi",
+        utrNumber: "431289567105",
+        proofImageUrl: null,
+        status: "approved",
+        adminNote: "Approved by Admin",
+        verifiedBy: "Satnam Singh",
+        verifiedAt: new Date(Date.now() - 36e5).toISOString(),
+        createdAt: new Date(Date.now() - 864e5).toISOString()
+      }
+    ]
+  ])
 };
 async function initDatabase() {
   try {
@@ -942,28 +1019,63 @@ async function deleteSubscriptionPlan(id) {
   return true;
 }
 function mapTxRow(r) {
+  const userId = r.user_id || r.userId || "";
+  const userName = r.resolved_user_name || r.user_name || r.userName || "";
+  const userEmail = r.resolved_user_email || r.user_email || r.userEmail || "";
+  const planId = r.plan_id || r.planId || "Months";
+  const slotId = r.slot_id || r.slotId || void 0;
+  const gatewayType = r.gateway_type || r.gatewayType || "upi";
+  const utr = String(r.utr_number || r.utrNumber || r.utr || "").trim();
+  const proofImageUrl = r.proof_image_url || r.proofImageUrl || void 0;
+  const adminNote = r.admin_note || r.adminNote || void 0;
+  const verifiedBy = r.verified_by || r.verifiedBy || void 0;
   return {
     id: r.id,
-    userId: r.user_id,
-    userName: r.user_name,
-    userEmail: r.user_email,
-    planId: r.plan_id,
-    slotId: r.slot_id,
-    amount: Number(r.amount),
-    currency: r.currency,
-    gatewayType: r.gateway_type,
-    utrNumber: r.utr_number,
-    proofImageUrl: r.proof_image_url,
-    status: r.status,
-    adminNote: r.admin_note,
-    verifiedBy: r.verified_by,
-    verifiedAt: r.verified_at ? new Date(r.verified_at).toISOString() : void 0,
-    createdAt: r.created_at ? new Date(r.created_at).toISOString() : (/* @__PURE__ */ new Date()).toISOString()
+    userId,
+    userName,
+    userEmail,
+    planId,
+    slotId,
+    amount: Number(r.amount || 0),
+    currency: r.currency || "INR",
+    gatewayType,
+    utrNumber: utr,
+    proofImageUrl,
+    status: r.status || "pending",
+    adminNote,
+    verifiedBy,
+    verifiedAt: r.verified_at ? new Date(r.verified_at).toISOString() : r.verifiedAt || void 0,
+    createdAt: r.created_at ? new Date(r.created_at).toISOString() : r.createdAt || (/* @__PURE__ */ new Date()).toISOString()
   };
 }
 async function createPaymentTransaction(tx) {
   const txId = tx.id || `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  const record = { ...tx, id: txId, status: tx.status || "pending" };
+  let resolvedName = tx.userName || "";
+  let resolvedEmail = tx.userEmail || "";
+  if ((!resolvedName || !resolvedEmail) && tx.userId) {
+    const u = memoryFallback.users.get(tx.userId);
+    if (u) {
+      resolvedName = resolvedName || u.name || "";
+      resolvedEmail = resolvedEmail || u.email || "";
+    }
+  }
+  const cleanUtr = String(tx.utrNumber || tx.utr || "").trim();
+  const record = {
+    ...tx,
+    id: txId,
+    userId: tx.userId || "",
+    userName: resolvedName || "Registered Creator",
+    userEmail: resolvedEmail,
+    planId: tx.planId || "Months",
+    slotId: tx.slotId || void 0,
+    amount: Number(tx.amount || 0),
+    currency: tx.currency || "INR",
+    gatewayType: tx.gatewayType || "upi",
+    utrNumber: cleanUtr,
+    proofImageUrl: tx.proofImageUrl || void 0,
+    status: tx.status || "pending",
+    createdAt: tx.createdAt || (/* @__PURE__ */ new Date()).toISOString()
+  };
   memoryFallback.paymentTransactions.set(txId, record);
   if (pool && isConnected) {
     try {
@@ -974,18 +1086,18 @@ async function createPaymentTransaction(tx) {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           txId,
-          tx.userId,
-          tx.userName || "",
-          tx.userEmail || "",
-          tx.planId,
-          tx.slotId || null,
-          tx.amount,
-          tx.currency || "INR",
-          tx.gatewayType || "upi",
-          tx.utrNumber || null,
-          tx.proofImageUrl || null,
+          record.userId,
+          record.userName,
+          record.userEmail,
+          record.planId,
+          record.slotId || null,
+          record.amount,
+          record.currency,
+          record.gatewayType,
+          record.utrNumber || null,
+          record.proofImageUrl || null,
           record.status,
-          tx.adminNote || null
+          record.adminNote || null
         ]
       );
     } catch (err) {
@@ -997,25 +1109,56 @@ async function createPaymentTransaction(tx) {
 async function getAllPaymentTransactions(statusFilter) {
   if (pool && isConnected) {
     try {
-      const sql = statusFilter && statusFilter !== "all" ? "SELECT * FROM payment_transactions WHERE status = ? ORDER BY created_at DESC" : "SELECT * FROM payment_transactions ORDER BY created_at DESC";
+      const sql = statusFilter && statusFilter !== "all" ? `SELECT pt.*, COALESCE(NULLIF(pt.user_name, ''), u.name, 'Registered Creator') AS resolved_user_name,
+                  COALESCE(NULLIF(pt.user_email, ''), u.email, '') AS resolved_user_email
+           FROM payment_transactions pt
+           LEFT JOIN users u ON pt.user_id = u.id
+           WHERE pt.status = ?
+           ORDER BY pt.created_at DESC` : `SELECT pt.*, COALESCE(NULLIF(pt.user_name, ''), u.name, 'Registered Creator') AS resolved_user_name,
+                  COALESCE(NULLIF(pt.user_email, ''), u.email, '') AS resolved_user_email
+           FROM payment_transactions pt
+           LEFT JOIN users u ON pt.user_id = u.id
+           ORDER BY pt.created_at DESC`;
       const params = statusFilter && statusFilter !== "all" ? [statusFilter] : [];
       const [rows] = await pool.query(sql, params);
-      return rows.map(mapTxRow);
+      return rows.map((r) => {
+        const mapped = mapTxRow(r);
+        return {
+          ...mapped,
+          userName: mapped.userName || r.resolved_user_name || "Registered Creator",
+          userEmail: mapped.userEmail || r.resolved_user_email || ""
+        };
+      });
     } catch (err) {
       console.error("[MySQL] getAllPaymentTransactions error:", err);
     }
   }
-  const all = Array.from(memoryFallback.paymentTransactions.values()).map(mapTxRow);
+  const all = Array.from(memoryFallback.paymentTransactions.values()).map((t) => {
+    const u = t.userId ? memoryFallback.users.get(t.userId) : null;
+    const mapped = mapTxRow(t);
+    return {
+      ...mapped,
+      userName: mapped.userName || u?.name || (mapped.userEmail ? mapped.userEmail.split("@")[0] : "Registered Creator"),
+      userEmail: mapped.userEmail || u?.email || "",
+      utrNumber: mapped.utrNumber || t.utrNumber || t.utr || "",
+      slotId: mapped.slotId || t.slotId || void 0
+    };
+  });
   return statusFilter && statusFilter !== "all" ? all.filter((t) => t.status === statusFilter) : all;
 }
 async function updatePaymentTransactionStatus(id, status, adminNote, verifiedBy) {
-  const all = await getAllPaymentTransactions();
-  const tx = all.find((t) => t.id === id);
+  let tx = memoryFallback.paymentTransactions.get(id);
+  if (!tx) {
+    const all = await getAllPaymentTransactions();
+    tx = all.find((t) => t.id === id);
+  }
   if (!tx) throw new Error("Transaction not found");
   const now = /* @__PURE__ */ new Date();
   tx.status = status;
   tx.adminNote = adminNote ?? tx.adminNote;
   tx.verifiedBy = verifiedBy ?? "admin";
+  tx.verifiedAt = now.toISOString();
+  memoryFallback.paymentTransactions.set(id, tx);
   tx.verifiedAt = now.toISOString();
   memoryFallback.paymentTransactions.set(id, tx);
   if (pool && isConnected) {
@@ -1042,19 +1185,57 @@ async function updatePaymentTransactionStatus(id, status, adminNote, verifiedBy)
         amount: tx.amount,
         status: "completed"
       });
-      if (tx.slotId) {
-        const slot = await getSlot(tx.slotId);
-        if (slot) {
-          const daysToAdd = 30;
-          const currentExp = slot.expiresAt && slot.expiresAt > Date.now() ? slot.expiresAt : Date.now();
-          const newExp = currentExp + daysToAdd * 24 * 3600 * 1e3;
-          await upsertSlot({
-            ...slot,
-            status: "active",
-            expiresAt: newExp,
-            expireOn: new Date(newExp).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
-          });
-        }
+      let daysToAdd = 30;
+      const lowerPlan = String(tx.planId || "").toLowerCase();
+      if (lowerPlan.includes("3 month") || lowerPlan.includes("quarter") || lowerPlan === "quarterly") {
+        daysToAdd = 90;
+      } else if (lowerPlan.includes("month") || lowerPlan === "months" || lowerPlan === "monthly") {
+        daysToAdd = 30;
+      } else if (lowerPlan.includes("week") || lowerPlan === "weeks" || lowerPlan === "weekly") {
+        daysToAdd = 7;
+      } else if (lowerPlan.includes("day") || lowerPlan === "days" || lowerPlan === "daily" || lowerPlan === "trial") {
+        daysToAdd = 1;
+      } else if (lowerPlan.includes("year") || lowerPlan.includes("annual")) {
+        daysToAdd = 365;
+      }
+      let targetSlot = tx.slotId ? await getSlot(tx.slotId) : null;
+      if (!targetSlot && tx.userId) {
+        const userSlots = await getSlots(tx.userId);
+        targetSlot = userSlots.find((s) => s.status === "pending_approval") || userSlots[0] || null;
+      }
+      if (targetSlot) {
+        const currentExp = targetSlot.expiresAt && targetSlot.expiresAt > Date.now() ? targetSlot.expiresAt : Date.now();
+        const newExp = currentExp + daysToAdd * 24 * 3600 * 1e3;
+        const d = new Date(newExp);
+        const expireOnStr = `${d.getDate()} ${d.toLocaleString("default", { month: "short" })} ${d.getFullYear()} - 11:59 PM`;
+        await upsertSlot({
+          ...targetSlot,
+          status: "active",
+          paymentStatus: "approved",
+          expiresAt: newExp,
+          expireOn: expireOnStr
+        });
+        tx.slotId = targetSlot.id;
+      } else if (tx.userId) {
+        const nowMs = Date.now();
+        const expMs = nowMs + daysToAdd * 24 * 3600 * 1e3;
+        const d = new Date(expMs);
+        const expireOnStr = `${d.getDate()} ${d.toLocaleString("default", { month: "short" })} ${d.getFullYear()} - 11:59 PM`;
+        const newSlot = {
+          id: `slot_${tx.userId.slice(-6)}_${Date.now().toString().slice(-4)}`,
+          userId: tx.userId,
+          name: `Live Slot 1`,
+          status: "active",
+          paymentStatus: "approved",
+          streamStatus: "Off",
+          platform: "YouTube",
+          streamKey: "",
+          streamLoop: true,
+          expiresAt: expMs,
+          expireOn: expireOnStr
+        };
+        await upsertSlot(newSlot);
+        tx.slotId = newSlot.id;
       }
     } catch (provisionErr) {
       console.error("[MySQL] Provisioning on approval error:", provisionErr);
@@ -1475,7 +1656,10 @@ function getIngestUrl(platform, rawStreamKey, customUrl) {
   const cleanKey = cleanStreamKey(rawStreamKey);
   const lower = (platform || "").toLowerCase();
   if (customUrl && customUrl.trim()) {
-    const base = customUrl.trim().replace(/\/+$/, "");
+    let base = customUrl.trim().replace(/\/+$/, "");
+    if (base.toLowerCase().includes("youtube.com") && base.startsWith("rtmps://")) {
+      base = base.replace("rtmps://", "rtmp://").replace(":443", "");
+    }
     return `${base}/${cleanKey}`;
   }
   if (lower.includes("youtube")) {
@@ -1580,6 +1764,25 @@ app.post("/api/stream/start", async (req, res) => {
   const cleanedKey = cleanStreamKey(streamKey);
   if (!cleanedKey) {
     return res.status(400).json({ error: "Stream key is required to broadcast to YouTube" });
+  }
+  try {
+    const slotData = await getSlot(slotId);
+    if (slotData) {
+      if (slotData.status === "pending_approval") {
+        return res.status(403).json({
+          success: false,
+          error: "This slot is pending payment approval. Please wait for admin approval before broadcasting."
+        });
+      }
+      if (slotData.status === "expired" || slotData.expiresAt && slotData.expiresAt > 0 && slotData.expiresAt < Date.now()) {
+        return res.status(403).json({
+          success: false,
+          error: "This slot subscription has expired. Please renew your slot subscription to stream live."
+        });
+      }
+    }
+  } catch (slotCheckErr) {
+    console.warn("[Stream Start] Slot check warning:", slotCheckErr);
   }
   const bitrateNum = Math.max(1e3, Math.min(15e3, Number(targetBitrateKbps) || 2500));
   const fpsNum = Number(fps) === 60 ? 60 : 30;
@@ -1747,6 +1950,9 @@ app.post("/api/stream/start", async (req, res) => {
     ];
   }
   const child = spawn(getFfmpegPath(), ffmpegArgs);
+  console.log(`[Slot ${slotId}] FFmpeg process spawned (PID: ${child.pid})`);
+  console.log(`[Slot ${slotId}] Destination: ${targetUrl.replace(cleanedKey, "***" + cleanedKey.slice(-4))}`);
+  console.log(`[Slot ${slotId}] Video input: ${resolvedVideo}`);
   const session = {
     slotId,
     streamKey,
@@ -1793,7 +1999,10 @@ app.post("/api/stream/start", async (req, res) => {
       if (lower.includes("error while opening encoder") || lower.includes("error initializing output stream") || lower.includes("width not divisible by 2") || lower.includes("height not divisible by 2") || lower.includes("incorrect parameters such as bit_rate")) {
         session.status = "error";
         session.lastError = "Video encoder error: Video dimensions or parameters were incompatible. Please use default 720p (2500 Kbps) settings or select a standard MP4 video.";
-      } else if (lower.includes("input/output error") || lower.includes("io error") || lower.includes("server error") || lower.includes("connection refused") || lower.includes("handshake failed") || lower.includes("cannot read rtmp handshake") || lower.includes("connection timed out") || lower.includes("broken pipe") || lower.includes("connection reset") || lower.includes("failed to connect") || lower.includes("rtmp_connect") || lower.includes("end of file") || lower.includes("error writing trailer") || lower.includes("failed to resolve hostname") || lower.includes("nodename nor servname") || lower.includes("network is unreachable") || lower.includes("rtmp") && (lower.includes("cannot open") || lower.includes("failed") || lower.includes("error"))) {
+      } else if (lower.includes("failed to resolve hostname") || lower.includes("nodename nor servname") || lower.includes("network is unreachable") || lower.includes("no route to host")) {
+        session.status = "error";
+        session.lastError = "Network error: Cannot resolve YouTube RTMP servers. Please check your internet connection.";
+      } else if (lower.includes("input/output error") || lower.includes("io error") || lower.includes("server error") || lower.includes("connection refused") || lower.includes("handshake failed") || lower.includes("cannot read rtmp handshake") || lower.includes("connection timed out") || lower.includes("broken pipe") || lower.includes("connection reset") || lower.includes("failed to connect") || lower.includes("rtmp_connect") || lower.includes("end of file") || lower.includes("error writing trailer") || lower.includes("rtmp") && (lower.includes("cannot open") || lower.includes("failed") || lower.includes("error"))) {
         session.status = "error";
         session.lastError = "YouTube Live rejected connection: Invalid or inactive Stream Key. Please copy your active Stream Key from YouTube Studio (studio.youtube.com/channel/live) and ensure Live Streaming is enabled.";
       } else if (lower.includes("no such file or directory") || lower.includes("cannot open") && !lower.includes("rtmp")) {
@@ -1828,6 +2037,11 @@ app.post("/api/stream/start", async (req, res) => {
         session.lastError = "YouTube Live rejected connection: Invalid or inactive Stream Key. Please copy your active Stream Key from YouTube Studio (studio.youtube.com/channel/live) and paste it into the slot settings.";
       }
     }
+    console.log(`[Slot ${slotId}] FFmpeg process closed with code ${code}. Status: ${session.status}, Error: ${session.lastError || "None"}`);
+    if (code !== 0 && session.logs.length > 0) {
+      console.log(`[Slot ${slotId}] Last FFmpeg logs before close:`);
+      session.logs.slice(-5).forEach((l) => console.log(`   > ${l}`));
+    }
     session.logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Stream process ended (code ${code})`);
   });
   return res.json({
@@ -1854,6 +2068,38 @@ app.post("/api/stream/stop", (req, res) => {
   activeStreams.delete(slotId);
   return res.json({ success: true, message: "Stream stopped successfully" });
 });
+setInterval(async () => {
+  try {
+    const allSlots = await getSlots();
+    const now = Date.now();
+    for (const slot of allSlots) {
+      const isExpired = Boolean(slot.expiresAt) && slot.expiresAt > 0 && slot.expiresAt <= now;
+      if (isExpired) {
+        const session = activeStreams.get(slot.id);
+        if (session) {
+          console.log(`[Watchdog] Slot ${slot.id} ("${slot.name}") expired. Terminating active live broadcast.`);
+          try {
+            session.process.kill("SIGTERM");
+          } catch {
+          }
+          session.status = "stopped";
+          activeStreams.delete(slot.id);
+        }
+        if (slot.status !== "expired" || slot.streamStatus === "Live") {
+          slot.status = "expired";
+          slot.streamStatus = "Off";
+          await upsertSlot({
+            ...slot,
+            status: "expired",
+            streamStatus: "Off"
+          }).catch(() => {
+          });
+        }
+      }
+    }
+  } catch (err) {
+  }
+}, 1e4);
 app.get("/api/stream/status/:slotId", (req, res) => {
   const { slotId } = req.params;
   const session = activeStreams.get(slotId);
@@ -2511,20 +2757,27 @@ app.post("/api/payments/upload-proof", (req, res) => {
 });
 app.post("/api/payments/submit-utr", async (req, res) => {
   try {
-    const { userId, userName, userEmail, planId, slotId, amount, currency, gatewayType, utrNumber, proofImageUrl } = req.body;
+    let { userId, userName, userEmail, planId, slotId, amount, currency, gatewayType, utrNumber, proofImageUrl } = req.body;
     if (!userId || !planId || !amount) {
       return res.status(400).json({ success: false, error: "userId, planId, and amount are required" });
     }
     if (!utrNumber || utrNumber.trim().length < 6) {
       return res.status(400).json({ success: false, error: "Please enter a valid 12-digit UPI UTR / Transaction Reference" });
     }
+    if ((!userName || userName === "Streamer" || !userEmail) && userId) {
+      const u = await getUser(userId);
+      if (u) {
+        if (!userName || userName === "Streamer") userName = u.name;
+        if (!userEmail) userEmail = u.email;
+      }
+    }
     const gateways = await getPaymentGateways();
     const gateway = gateways.find((g) => g.id === gatewayType);
     const autoVerify = Boolean(gateway?.autoVerify);
     const tx = await createPaymentTransaction({
       userId,
-      userName,
-      userEmail,
+      userName: userName || "Registered Creator",
+      userEmail: userEmail || "",
       planId,
       slotId,
       amount,
@@ -2573,7 +2826,7 @@ app.post("/api/admin/transactions/simulate-auto-verify", async (req, res) => {
   try {
     const { utrNumber } = req.body;
     const pending = await getAllPaymentTransactions("pending");
-    let target = utrNumber ? pending.find((t) => t.utrNumber === utrNumber) : pending[0];
+    let target = utrNumber ? pending.find((t) => t.utrNumber === utrNumber || t.utr === utrNumber) : pending[0];
     if (!target) {
       return res.status(404).json({ success: false, error: "No pending transaction found to auto-verify" });
     }

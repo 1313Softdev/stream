@@ -31,6 +31,8 @@ import {
   Gauge,
   Sliders,
   RotateCcw,
+  Lock,
+  QrCode,
 } from 'lucide-react';
 import { Slot, VideoItem, StreamingPlatform } from '../types';
 import { AppView } from './Sidebar';
@@ -64,6 +66,9 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
   const [autoStartOnKeyUpdate, setAutoStartOnKeyUpdate] = useState<boolean>(
     slot.autoStartOnKeyUpdate ?? true
   );
+
+  const isExpired = slot.status === 'expired' || (Boolean(slot.expiresAt) && slot.expiresAt! > 0 && slot.expiresAt! <= Date.now());
+  const isPendingApproval = slot.status === 'pending_approval';
 
   // Stream Quality & Bitrate Settings
   const [targetBitrateKbps, setTargetBitrateKbps] = useState<number>(
@@ -377,6 +382,17 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
 
   // 2. Direct Action: Go live with the specified key immediately
   const handleGoLiveWithKey = (keyToUse?: string) => {
+    if (isExpired) {
+      setNotificationToast('Cannot start broadcast: Slot subscription has expired. Please renew first.');
+      setTimeout(() => setNotificationToast(null), 4000);
+      return;
+    }
+    if (isPendingApproval) {
+      setNotificationToast('Cannot start broadcast: Slot is pending payment approval.');
+      setTimeout(() => setNotificationToast(null), 4000);
+      return;
+    }
+
     const raw = keyToUse !== undefined ? keyToUse : streamKey;
     const trimmed = raw.trim();
     if (!trimmed) {
@@ -636,16 +652,66 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
 
         <div className="flex items-center gap-4">
           <div className="text-sm font-semibold text-red-500 tabular-nums">
-            Expires in : {formattedCountdown}
+            {isExpired ? 'Slot Expired' : `Expires in : ${formattedCountdown}`}
           </div>
           <button
-            onClick={() => onNavigate('billing')}
+            onClick={() => onNavigate('live-slots')}
             className="px-4 py-1.5 text-xs font-semibold text-red-600 dark:text-red-400 border border-red-300 dark:border-red-800/80 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-md transition-colors cursor-pointer"
           >
             Renew now
           </button>
         </div>
       </div>
+
+      {/* Expired Slot Alert Banner */}
+      {isExpired && (
+        <div className="p-4 sm:p-5 rounded-2xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in fade-in">
+          <div className="flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-red-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <AlertCircle className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-red-900 dark:text-red-200">
+                Slot Subscription Expired
+              </h4>
+              <p className="text-xs text-red-700 dark:text-red-300 mt-0.5">
+                This slot has expired. Live streaming is closed. Renew your subscription to resume broadcasting 24/7 continuous loops.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => onNavigate('live-slots')}
+            className="px-5 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg shadow-sm transition-colors cursor-pointer shrink-0"
+          >
+            Renew Slot Subscription
+          </button>
+        </div>
+      )}
+
+      {/* Pending Payment Alert Banner */}
+      {isPendingApproval && (
+        <div className="p-4 sm:p-5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in fade-in">
+          <div className="flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <Lock className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-amber-900 dark:text-amber-200">
+                Payment Verification Pending
+              </h4>
+              <p className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">
+                This slot is waiting for payment approval by an admin. Broadcasting will unlock once approved.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => onNavigate('live-slots')}
+            className="px-5 py-2 text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 rounded-lg shadow-sm transition-colors cursor-pointer shrink-0"
+          >
+            View / Submit Payment UTR
+          </button>
+        </div>
+      )}
 
       {/* Scheduled Stream Active Notice Banner */}
       {isScheduled && (
@@ -1552,14 +1618,42 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
             </div>
           </div>
           <div className="text-xs text-slate-300">
-            Active 24/7 RTMP Ingest Target: <code className="bg-slate-800 px-2 py-0.5 rounded text-purple-300 font-mono">{slot.rtmpServerUrl || (slot.platform === 'YouTube' ? 'rtmps://a.rtmp.youtube.com:443/live2' : `${slot.platform} RTMP`)}</code>
+            Active 24/7 RTMP Ingest Target: <code className="bg-slate-800 px-2 py-0.5 rounded text-purple-300 font-mono">{slot.rtmpServerUrl || (slot.platform === 'YouTube' ? 'rtmp://a.rtmp.youtube.com/live2' : `${slot.platform} RTMP`)}</code>
           </div>
         </div>
       )}
 
       {/* Bottom Bar: Action Buttons with Schedule Stream support */}
       <div className="flex items-center justify-end gap-3 pt-6 border-t border-slate-100 dark:border-slate-800">
-        {isStreaming ? (
+        {isExpired ? (
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-semibold text-red-600 dark:text-red-400 flex items-center gap-1.5">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>Broadcast Closed (Slot Expired)</span>
+            </span>
+            <button
+              onClick={() => onNavigate('live-slots')}
+              className="px-7 py-3 rounded-lg text-sm font-bold text-white bg-purple-600 hover:bg-purple-700 shadow-md transition-all cursor-pointer flex items-center gap-2"
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span>Renew Subscription to Stream</span>
+            </button>
+          </div>
+        ) : isPendingApproval ? (
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+              <Lock className="w-4 h-4 shrink-0" />
+              <span>Broadcast Locked (Pending Payment)</span>
+            </span>
+            <button
+              onClick={() => onNavigate('live-slots')}
+              className="px-7 py-3 rounded-lg text-sm font-bold text-white bg-amber-500 hover:bg-amber-600 shadow-md transition-all cursor-pointer flex items-center gap-2"
+            >
+              <QrCode className="w-4 h-4" />
+              <span>Pay & Activate Slot</span>
+            </button>
+          </div>
+        ) : isStreaming ? (
           <button
             onClick={() => onToggleStream(slot.id)}
             className="px-8 py-3 rounded-lg text-sm font-bold text-white bg-red-600 hover:bg-red-700 shadow-md transition-all cursor-pointer flex items-center gap-2"

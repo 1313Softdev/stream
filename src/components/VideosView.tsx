@@ -40,9 +40,11 @@ export const VideosView: React.FC<VideosViewProps> = ({
   const [customUrl, setCustomUrl] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [isAnalyzingFile, setIsAnalyzingFile] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [processingStage, setProcessingStage] = useState<string>('Processing video & generating live snapshot...');
+  const [uploadStage, setUploadStage] = useState<'uploading' | 'processing' | 'completed'>('uploading');
+  const [processingStage, setProcessingStage] = useState<string>('');
   const [filePreviewData, setFilePreviewData] = useState<{
     duration: string;
     resolution: string;
@@ -85,24 +87,16 @@ export const VideosView: React.FC<VideosViewProps> = ({
       setCustomTitle(cleanName);
     }
 
-    setIsProcessing(true);
-    setProcessingStage('Analyzing video & generating live snapshot...');
-    setUploadProgress(20);
+    // Client-side metadata preview extraction (does not start upload or fake progress bar)
+    setIsAnalyzingFile(true);
 
     try {
-      // Extract video duration, resolution, thumbnail
       const meta = await extractVideoMetadata(file);
       setFilePreviewData(meta);
-      setUploadProgress(100);
-
-      setTimeout(() => {
-        setIsProcessing(false);
-        setUploadProgress(0);
-      }, 350);
     } catch (err) {
       console.warn('Metadata extraction fallback:', err);
-      setIsProcessing(false);
-      setUploadProgress(0);
+    } finally {
+      setIsAnalyzingFile(false);
     }
   };
 
@@ -110,8 +104,9 @@ export const VideosView: React.FC<VideosViewProps> = ({
     e.preventDefault();
     if (!customTitle.trim()) return;
 
-    setIsProcessing(true);
+    setIsUploading(true);
     setUploadProgress(0);
+    setUploadStage('uploading');
     setProcessingStage('Preparing video upload...');
     const videoId = `vid-${Date.now()}`;
 
@@ -123,22 +118,47 @@ export const VideosView: React.FC<VideosViewProps> = ({
     let thumbnailUrl = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=60';
 
     let videoPath: string | undefined = undefined;
+    let progressTimer: any = null;
 
     if (selectedFile) {
       sizeBytes = selectedFile.size;
       const sizeMB = sizeBytes / (1024 * 1024);
       sizeFormatted = sizeMB >= 1000 ? `${(sizeMB / 1024).toFixed(1)} GB` : `${Math.round(sizeMB)} MB`;
 
-      setProcessingStage(`Uploading video (${sizeFormatted})...`);
+      setProcessingStage(`Uploading: 0.0 MB / ${sizeFormatted} (0%)`);
 
       // Upload directly to server so 24/7 cloud FFmpeg can stream the actual file
       try {
-        const uploadResult = await uploadVideoToServer(selectedFile, (percent, loadedBytes, totalBytes) => {
-          setUploadProgress(percent);
-          const loadedMB = (loadedBytes / (1024 * 1024)).toFixed(1);
-          const totalMB = (totalBytes / (1024 * 1024)).toFixed(1);
-          setProcessingStage(`Uploading: ${loadedMB} MB / ${totalMB} MB (${percent}%)`);
+        const uploadResult = await uploadVideoToServer(selectedFile, (rawPercent, loadedBytes, totalBytes) => {
+          if (rawPercent < 100) {
+            // Scale real byte transmission to 0% - 88%
+            const scaled = Math.min(88, Math.max(1, Math.round(rawPercent * 0.88)));
+            setUploadProgress(scaled);
+            const loadedMB = (loadedBytes / (1024 * 1024)).toFixed(1);
+            const totalMB = (totalBytes / (1024 * 1024)).toFixed(1);
+            setProcessingStage(`Uploading to cloud: ${loadedMB} MB / ${totalMB} MB (${rawPercent}%)`);
+          } else {
+            // All bytes sent to server! Enter server-side verification & processing phase (90% - 98%)
+            setUploadStage('processing');
+            setUploadProgress(90);
+            setProcessingStage('Processing video on server & generating 24/7 stream link...');
+
+            if (!progressTimer) {
+              let cur = 90;
+              progressTimer = setInterval(() => {
+                cur += 1;
+                if (cur <= 98) {
+                  setUploadProgress(cur);
+                }
+              }, 400);
+            }
+          }
         });
+
+        if (progressTimer) {
+          clearInterval(progressTimer);
+          progressTimer = null;
+        }
 
         if (uploadResult.success && uploadResult.videoPath) {
           videoPath = uploadResult.videoPath;
@@ -147,15 +167,17 @@ export const VideosView: React.FC<VideosViewProps> = ({
           throw new Error(uploadResult.error);
         }
       } catch (err: any) {
-        console.warn('Server storage warning:', err);
+        if (progressTimer) {
+          clearInterval(progressTimer);
+          progressTimer = null;
+        }
+        console.warn('Server storage error:', err);
+        setErrorToast(err.message || 'Video upload failed. Please try again.');
+        setTimeout(() => setErrorToast(null), 4000);
+        setIsUploading(false);
+        setUploadProgress(0);
+        return;
       }
-
-      setProcessingStage('Finalizing and saving to library...');
-      setUploadProgress(100);
-
-      // Store in browser local media vault
-      const blobUrl = await storeLocalVideoBlob(videoId, selectedFile);
-      if (!videoUrl) videoUrl = blobUrl;
 
       if (filePreviewData) {
         duration = filePreviewData.duration;
@@ -166,6 +188,11 @@ export const VideosView: React.FC<VideosViewProps> = ({
       videoUrl = '/videos/lofi-chill.mp4';
       videoPath = 'public/videos/lofi-chill.mp4';
     }
+
+    // Phase 3: Completed! ONLY NOW show 100% and ready state
+    setUploadStage('completed');
+    setUploadProgress(100);
+    setProcessingStage('✓ Video processed & ready! Added to library.');
 
     const newVideo: VideoItem = {
       id: videoId,
@@ -183,15 +210,20 @@ export const VideosView: React.FC<VideosViewProps> = ({
     };
 
     onAddVideo(newVideo);
-    setIsProcessing(false);
-    setShowUploadModal(false);
-    setSelectedFile(null);
-    setFilePreviewData(null);
-    setCustomTitle('');
-    setCustomUrl('');
 
-    setSuccessToast(`"${newVideo.title}" was uploaded and added to your 24/7 video library!`);
-    setTimeout(() => setSuccessToast(null), 4000);
+    // Brief pause to display 100% complete state before modal dismiss
+    setTimeout(() => {
+      setIsUploading(false);
+      setShowUploadModal(false);
+      setSelectedFile(null);
+      setFilePreviewData(null);
+      setCustomTitle('');
+      setCustomUrl('');
+      setUploadProgress(0);
+
+      setSuccessToast(`"${newVideo.title}" was uploaded and added to your 24/7 video library!`);
+      setTimeout(() => setSuccessToast(null), 4000);
+    }, 450);
   };
 
   const handleAddPresetVideo = (preset: VideoItem) => {
@@ -382,8 +414,8 @@ export const VideosView: React.FC<VideosViewProps> = ({
 
       {/* Upload Video Modal */}
       {showUploadModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-lg w-full p-6 shadow-xl border border-slate-200 dark:border-slate-800 flex flex-col gap-5 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-lg w-full p-6 shadow-xl border border-slate-200 dark:border-slate-800 flex flex-col gap-5 max-h-[90vh] overflow-y-auto my-auto">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-bold text-slate-900 dark:text-white">
@@ -448,7 +480,7 @@ export const VideosView: React.FC<VideosViewProps> = ({
                 <div
                   onDragOver={(e) => {
                     e.preventDefault();
-                    setIsDragging(true);
+                    if (!isUploading) setIsDragging(true);
                   }}
                   onDragLeave={(e) => {
                     e.preventDefault();
@@ -457,20 +489,36 @@ export const VideosView: React.FC<VideosViewProps> = ({
                   onDrop={(e) => {
                     e.preventDefault();
                     setIsDragging(false);
-                    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                    if (!isUploading && e.dataTransfer.files && e.dataTransfer.files[0]) {
                       handleFileChange(e.dataTransfer.files[0]);
                     }
                   }}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-xl p-6 text-center flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${
-                    isDragging
-                      ? 'border-[#6320ee] bg-purple-50 dark:bg-purple-950/40 scale-[1.01]'
+                  onClick={() => {
+                    if (!isUploading && !isAnalyzingFile) {
+                      fileInputRef.current?.click();
+                    }
+                  }}
+                  className={`border-2 border-dashed rounded-xl p-6 text-center flex flex-col items-center justify-center gap-2 transition-all ${
+                    isUploading
+                      ? 'opacity-60 cursor-not-allowed border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40'
+                      : isDragging
+                      ? 'border-[#6320ee] bg-purple-50 dark:bg-purple-950/40 scale-[1.01] cursor-pointer'
                       : selectedFile
-                      ? 'border-emerald-400 bg-emerald-50/40 dark:bg-emerald-950/20'
-                      : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 hover:border-[#6320ee]'
+                      ? 'border-emerald-400 bg-emerald-50/40 dark:bg-emerald-950/20 cursor-pointer'
+                      : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 hover:border-[#6320ee] cursor-pointer'
                   }`}
                 >
-                  {selectedFile ? (
+                  {isAnalyzingFile ? (
+                    <div className="flex flex-col items-center gap-2 py-2">
+                      <Loader2 className="w-8 h-8 animate-spin text-[#6320ee]" />
+                      <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                        Analyzing video & generating snapshot preview...
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        Extracting resolution, duration, and thumbnail
+                      </span>
+                    </div>
+                  ) : selectedFile ? (
                     <div className="flex flex-col items-center gap-2 w-full">
                       <div className="w-12 h-12 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 flex items-center justify-center">
                         <Check className="w-6 h-6 stroke-2" />
@@ -485,18 +533,20 @@ export const VideosView: React.FC<VideosViewProps> = ({
                             : `${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB`}
                         </span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedFile(null);
-                          setFilePreviewData(null);
-                          if (fileInputRef.current) fileInputRef.current.value = '';
-                        }}
-                        className="text-[11px] font-semibold text-red-500 hover:underline mt-1"
-                      >
-                        Choose another file
-                      </button>
+                      {!isUploading && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedFile(null);
+                            setFilePreviewData(null);
+                            if (fileInputRef.current) fileInputRef.current.value = '';
+                          }}
+                          className="text-[11px] font-semibold text-red-500 hover:underline mt-1"
+                        >
+                          Choose another file
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <>
@@ -513,19 +563,27 @@ export const VideosView: React.FC<VideosViewProps> = ({
                   )}
                 </div>
 
-                {/* Progress bar if analyzing or uploading */}
-                {isProcessing && (
-                  <div className="flex flex-col gap-1.5 p-3 rounded-xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800/80 shadow-xs animate-in fade-in">
+                {/* Real-time Upload & Server Processing Progress Bar */}
+                {isUploading && (
+                  <div className="flex flex-col gap-2 p-3.5 rounded-xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800/80 shadow-xs animate-in fade-in">
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-semibold text-[#6320ee] dark:text-[#a855f7] flex items-center gap-2">
-                        <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                        {uploadStage === 'completed' ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                        ) : (
+                          <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                        )}
                         <span>{processingStage}</span>
                       </span>
-                      <span className="font-mono font-bold text-[#6320ee] dark:text-[#a855f7] shrink-0 ml-2">{uploadProgress}%</span>
+                      <span className="font-mono font-bold text-[#6320ee] dark:text-[#a855f7] shrink-0 ml-2">
+                        {uploadProgress}%
+                      </span>
                     </div>
-                    <div className="w-full h-2 bg-purple-200/70 dark:bg-purple-900/60 rounded-full overflow-hidden">
+                    <div className="w-full h-2.5 bg-purple-200/70 dark:bg-purple-900/60 rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-[#6320ee] rounded-full transition-all duration-150 ease-out"
+                        className={`h-full rounded-full transition-all duration-200 ease-out ${
+                          uploadStage === 'completed' ? 'bg-emerald-500' : 'bg-[#6320ee]'
+                        }`}
                         style={{ width: `${uploadProgress}%` }}
                       />
                     </div>
@@ -568,23 +626,26 @@ export const VideosView: React.FC<VideosViewProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      setShowUploadModal(false);
-                      setSelectedFile(null);
-                      setFilePreviewData(null);
+                      if (!isUploading) {
+                        setShowUploadModal(false);
+                        setSelectedFile(null);
+                        setFilePreviewData(null);
+                      }
                     }}
-                    className="px-4 py-2 text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer"
+                    disabled={isUploading}
+                    className="px-4 py-2 text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 rounded-lg cursor-pointer transition-colors"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    disabled={isProcessing || (!selectedFile && !customTitle.trim())}
-                    className="px-5 py-2 text-xs font-semibold text-white bg-[#6320ee] hover:bg-[#5218cc] disabled:opacity-50 rounded-lg shadow-xs cursor-pointer flex items-center gap-1.5"
+                    disabled={isUploading || isAnalyzingFile || (!selectedFile && !customTitle.trim())}
+                    className="px-5 py-2 text-xs font-semibold text-white bg-[#6320ee] hover:bg-[#5218cc] disabled:opacity-50 rounded-lg shadow-xs cursor-pointer flex items-center gap-1.5 transition-colors"
                   >
-                    {isProcessing ? (
+                    {isUploading ? (
                       <>
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>Uploading...</span>
+                        <span>{uploadStage === 'processing' ? 'Processing...' : 'Uploading...'}</span>
                       </>
                     ) : (
                       <>

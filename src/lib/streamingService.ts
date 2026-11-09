@@ -126,8 +126,8 @@ export async function uploadVideoToServer(
       if (xhr.upload && onProgress) {
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable && e.total > 0) {
-            const percent = Math.min(99, Math.round((e.loaded / e.total) * 100));
-            onProgress(percent, e.loaded, e.total);
+            const rawPercent = Math.min(100, Math.round((e.loaded / e.total) * 100));
+            onProgress(rawPercent, e.loaded, e.total);
           }
         };
       }
@@ -142,7 +142,6 @@ export async function uploadVideoToServer(
           }
           const data = JSON.parse(xhr.responseText);
           if (xhr.status >= 200 && xhr.status < 300) {
-            if (onProgress) onProgress(100, file.size, file.size);
             resolve(data);
           } else {
             resolve({ success: false, error: data.error || 'Video upload failed' });

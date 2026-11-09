@@ -42,6 +42,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const [gateways, setGateways] = useState<PaymentGatewayConfig[]>([]);
   const [selectedGatewayId, setSelectedGatewayId] = useState<string>('upi');
   const [copiedUpi, setCopiedUpi] = useState(false);
+  const [payerName, setPayerName] = useState(user?.name && user.name !== 'Streamer' ? user.name : '');
+  const [payerEmail, setPayerEmail] = useState(user?.email || '');
   const [utrNumber, setUtrNumber] = useState('');
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [proofPreview, setProofPreview] = useState<string | null>(null);
@@ -57,6 +59,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       setUtrNumber('');
       setProofFile(null);
       setProofPreview(null);
+      if (user?.name && user.name !== 'Streamer') setPayerName(user.name);
+      if (user?.email) setPayerEmail(user.email);
       fetchPaymentGateways()
         .then((g) => {
           setGateways(g);
@@ -128,10 +132,13 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         proofUrl = await uploadPaymentProof(proofFile);
       }
 
+      const finalName = (payerName && payerName.trim()) || user.name || 'Registered Creator';
+      const finalEmail = (payerEmail && payerEmail.trim()) || user.email || '';
+
       const res = await submitPaymentUtr({
         userId: user.id,
-        userName: user.name,
-        userEmail: user.email,
+        userName: finalName,
+        userEmail: finalEmail,
         planId,
         slotId,
         amount,
@@ -292,6 +299,37 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                   <span>Pay directly via UPI App</span>
                   <ExternalLink className="w-3 h-3" />
                 </a>
+              </div>
+            </div>
+
+            {/* Customer Account Details */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-2xl bg-purple-50/50 dark:bg-purple-950/20 border border-purple-100 dark:border-purple-900/40">
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] font-bold text-slate-800 dark:text-slate-200">
+                  User Name / Channel*
+                </label>
+                <input
+                  type="text"
+                  value={payerName}
+                  onChange={(e) => setPayerName(e.target.value)}
+                  placeholder="e.g. Satnam Singh"
+                  required
+                  className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#6320ee]"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] font-bold text-slate-800 dark:text-slate-200">
+                  Account Email / Phone*
+                </label>
+                <input
+                  type="text"
+                  value={payerEmail}
+                  onChange={(e) => setPayerEmail(e.target.value)}
+                  placeholder="e.g. user@gmail.com"
+                  required
+                  className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#6320ee]"
+                />
               </div>
             </div>
 

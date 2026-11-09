@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
   Users,
+  User,
+  Mail,
   Search,
   Plus,
   Trash2,
@@ -77,6 +79,7 @@ interface AdminDashboardViewProps {
   slots: Slot[];
   videos: VideoItem[];
   onNavigateToSlots?: () => void;
+  onApproveSlot?: (slotId: string, planId?: string) => void;
 }
 
 export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
@@ -84,6 +87,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   slots,
   videos,
   onNavigateToSlots,
+  onApproveSlot,
 }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [isLoading, setIsLoading] = useState(false);
@@ -309,11 +313,21 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   // UTR Desk Actions
   const handleVerifyTx = async (id: string, status: 'approved' | 'rejected') => {
+    const targetTx = transactions.find((t) => t.id === id);
     const note = status === 'approved' ? 'Approved by Admin' : prompt('Enter rejection reason:') || 'Invalid UTR';
     try {
       const updated = await verifyAdminTransaction(id, status, note);
       setTransactions(transactions.map((t) => (t.id === updated.id ? updated : t)));
-      showToast(`Transaction ${status.toUpperCase()}! Slot provisioned.`);
+      const slotIdToActivate = updated.slotId || targetTx?.slotId;
+      const planId = updated.planId || targetTx?.planId;
+      if (status === 'approved' && onApproveSlot) {
+        onApproveSlot(slotIdToActivate || '', planId);
+      }
+      showToast(
+        status === 'approved'
+          ? `Transaction APPROVED! User slot has been activated and is ready to use.`
+          : `Transaction REJECTED.`
+      );
     } catch (err: any) {
       alert(err.message);
     }
@@ -323,7 +337,10 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     try {
       const res = await simulateAutoVerifyUtr();
       setTransactions(transactions.map((t) => (t.id === res.transaction.id ? res.transaction : t)));
-      showToast(res.message);
+      if (res.transaction && onApproveSlot) {
+        onApproveSlot(res.transaction.slotId || '', res.transaction.planId);
+      }
+      showToast('Auto-verification simulated! Transaction approved and user slot activated.');
     } catch (err: any) {
       alert(err.message);
     }
@@ -1466,100 +1483,177 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-slate-500 font-semibold uppercase tracking-wider">
                   <tr>
-                    <th className="py-3 px-4">User</th>
-                    <th className="py-3 px-4">Plan / Amount</th>
-                    <th className="py-3 px-4">12-Digit UTR</th>
-                    <th className="py-3 px-4">Proof Receipt</th>
-                    <th className="py-3 px-4">Status</th>
+                    <th className="py-3 px-4">User Name & Account</th>
+                    <th className="py-3 px-4">12-Digit UTR Number</th>
+                    <th className="py-3 px-4">Subscription Plan</th>
+                    <th className="py-3 px-4">Payment Proof</th>
+                    <th className="py-3 px-4">Approval Status</th>
                     <th className="py-3 px-4">Date</th>
-                    <th className="py-3 px-4 text-right">Review Action</th>
+                    <th className="py-3 px-4 text-right">Approval Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
-                  {transactions
-                    .filter((t) => txFilter === 'all' || t.status === txFilter)
-                    .map((tx) => (
-                      <tr key={tx.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors">
-                        <td className="py-3.5 px-4">
-                          <div className="flex flex-col">
-                            <span className="font-bold text-slate-900 dark:text-white">{tx.userName || 'Customer'}</span>
-                            <span className="text-[11px] text-slate-400">{tx.userEmail}</span>
-                          </div>
-                        </td>
-
-                        <td className="py-3.5 px-4">
-                          <div className="flex flex-col">
-                            <span className="font-semibold text-slate-900 dark:text-white">
-                              {tx.currency === 'INR' ? `₹${tx.amount}` : `$${tx.amount}`}
-                            </span>
-                            <span className="text-[11px] text-[#6320ee] dark:text-[#a855f7] capitalize">
-                              {tx.planId} ({tx.gatewayType})
-                            </span>
-                          </div>
-                        </td>
-
-                        <td className="py-3.5 px-4">
-                          <span className="font-mono font-bold text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded select-all">
-                            {tx.utrNumber || 'N/A'}
-                          </span>
-                        </td>
-
-                        <td className="py-3.5 px-4">
-                          {tx.proofImageUrl ? (
-                            <button
-                              onClick={() => setPreviewReceiptUrl(tx.proofImageUrl || null)}
-                              className="text-blue-600 hover:underline flex items-center gap-1 font-semibold cursor-pointer"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                              <span>View Receipt</span>
-                            </button>
-                          ) : (
-                            <span className="text-slate-400 text-[11px]">No image</span>
-                          )}
-                        </td>
-
-                        <td className="py-3.5 px-4">
-                          <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                              tx.status === 'approved'
-                                ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
-                                : tx.status === 'rejected'
-                                ? 'bg-red-50 text-red-600 border border-red-200'
-                                : 'bg-amber-50 text-amber-600 border border-amber-200 animate-pulse'
-                            }`}
-                          >
-                            {tx.status}
-                          </span>
-                        </td>
-
-                        <td className="py-3.5 px-4 text-slate-400 text-[11px]">
-                          {new Date(tx.createdAt).toLocaleDateString()}
-                        </td>
-
-                        <td className="py-3.5 px-4 text-right">
-                          {tx.status === 'pending' ? (
-                            <div className="inline-flex items-center gap-2">
-                              <button
-                                onClick={() => handleVerifyTx(tx.id, 'approved')}
-                                className="px-2.5 py-1 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition-colors cursor-pointer shadow-xs"
-                              >
-                                Approve
-                              </button>
-                              <button
-                                onClick={() => handleVerifyTx(tx.id, 'rejected')}
-                                className="px-2.5 py-1 rounded-lg text-xs font-bold text-white bg-red-600 hover:bg-red-700 transition-colors cursor-pointer shadow-xs"
-                              >
-                                Reject
-                              </button>
+                  {transactions.filter((t) => txFilter === 'all' || t.status === txFilter).length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-10 text-center text-slate-400">
+                        No transactions found for the selected filter.
+                      </td>
+                    </tr>
+                  ) : (
+                    transactions
+                      .filter((t) => txFilter === 'all' || t.status === txFilter)
+                      .map((tx) => (
+                        <tr key={tx.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors">
+                          {/* User Name & Account */}
+                          <td className="py-3.5 px-4">
+                            <div className="flex flex-col gap-1">
+                              <span className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-1.5">
+                                <User className="w-3.5 h-3.5 text-[#6320ee] dark:text-[#a855f7] shrink-0" />
+                                <span className="truncate max-w-[200px]">
+                                  {tx.userName && tx.userName !== 'Customer'
+                                    ? tx.userName
+                                    : (tx.userEmail ? tx.userEmail.split('@')[0] : 'Registered Creator')}
+                                </span>
+                              </span>
+                              {tx.userEmail ? (
+                                <span className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1 font-mono">
+                                  <Mail className="w-3 h-3 text-slate-400 shrink-0" />
+                                  <span className="truncate max-w-[220px]">{tx.userEmail}</span>
+                                </span>
+                              ) : (
+                                <span className="text-[11px] text-slate-400 font-mono italic">
+                                  ID: {tx.userId || 'Guest'}
+                                </span>
+                              )}
+                              {tx.slotId && (
+                                <span className="text-[10px] text-[#6320ee] dark:text-[#a855f7] font-mono mt-0.5 bg-purple-50 dark:bg-purple-950/40 px-1.5 py-0.5 rounded w-fit border border-purple-200 dark:border-purple-800/40">
+                                  Slot: {tx.slotId}
+                                </span>
+                              )}
                             </div>
-                          ) : (
-                            <span className="text-[11px] text-slate-400 italic">
-                              {tx.verifiedBy ? `By ${tx.verifiedBy}` : 'Completed'}
+                          </td>
+
+                          {/* 12-Digit UTR Number */}
+                          <td className="py-3.5 px-4">
+                            {(() => {
+                              const utrVal = tx.utrNumber || (tx as any).utr || (tx as any).utr_number || '';
+                              return utrVal ? (
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono font-bold text-sm text-[#6320ee] dark:text-[#a855f7] bg-purple-50 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800/80 px-2.5 py-1 rounded-lg select-all tracking-wider shadow-xs">
+                                    {utrVal}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(utrVal);
+                                      showToast('UTR reference copied to clipboard!');
+                                    }}
+                                    className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded cursor-pointer"
+                                    title="Copy 12-Digit UTR"
+                                  >
+                                    <Copy className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-[11px] text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 px-2 py-0.5 rounded font-mono">
+                                  No UTR Provided
+                                </span>
+                              );
+                            })()}
+                          </td>
+
+                          {/* Plan / Amount */}
+                          <td className="py-3.5 px-4">
+                            <div className="flex flex-col">
+                              <span className="font-bold text-slate-900 dark:text-white text-sm">
+                                {tx.currency === 'INR' ? `₹${tx.amount}` : `$${tx.amount}`}
+                              </span>
+                              <span className="text-xs text-slate-500 dark:text-slate-400 capitalize">
+                                {tx.planId} ({tx.gatewayType})
+                              </span>
+                            </div>
+                          </td>
+
+                          {/* Proof Receipt */}
+                          <td className="py-3.5 px-4">
+                            {tx.proofImageUrl ? (
+                              <button
+                                onClick={() => setPreviewReceiptUrl(tx.proofImageUrl || null)}
+                                className="text-blue-600 hover:underline flex items-center gap-1.5 font-semibold cursor-pointer"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>View Receipt</span>
+                              </button>
+                            ) : (
+                              <span className="text-slate-400 text-xs italic">No image</span>
+                            )}
+                          </td>
+
+                          {/* Status */}
+                          <td className="py-3.5 px-4">
+                            <span
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold uppercase ${
+                                tx.status === 'approved'
+                                  ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800'
+                                  : tx.status === 'rejected'
+                                  ? 'bg-red-50 dark:bg-red-950/50 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800'
+                                  : 'bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800 animate-pulse'
+                              }`}
+                            >
+                              {tx.status === 'approved' ? (
+                                <>
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  <span>APPROVED · SLOT ACTIVE</span>
+                                </>
+                              ) : tx.status === 'rejected' ? (
+                                <>
+                                  <XCircle className="w-3.5 h-3.5" />
+                                  <span>REJECTED</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Clock className="w-3.5 h-3.5" />
+                                  <span>PENDING REVIEW</span>
+                                </>
+                              )}
                             </span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+
+                          {/* Date */}
+                          <td className="py-3.5 px-4 text-slate-500 text-xs tabular-nums">
+                            {new Date(tx.createdAt).toLocaleDateString()}
+                          </td>
+
+                          {/* Review Action */}
+                          <td className="py-3.5 px-4 text-right">
+                            {tx.status === 'pending' ? (
+                              <div className="inline-flex items-center gap-2">
+                                <button
+                                  onClick={() => handleVerifyTx(tx.id, 'approved')}
+                                  className="px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
+                                  title="Approve transaction and activate slot for user"
+                                >
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  <span>Approve & Activate</span>
+                                </button>
+                                <button
+                                  onClick={() => handleVerifyTx(tx.id, 'rejected')}
+                                  className="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-red-600 border border-slate-200 dark:border-slate-700 hover:border-red-300 rounded-lg transition-colors cursor-pointer"
+                                  title="Reject transaction"
+                                >
+                                  <span>Reject</span>
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 flex items-center justify-end gap-1">
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Slot Active & Ready</span>
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                  )}
                 </tbody>
               </table>
             </div>

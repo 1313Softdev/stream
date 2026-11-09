@@ -310,20 +310,14 @@ export default function App() {
         const targetUserId = remoteUser?.id || user.id;
         const remoteSlots = await fetchSlots(targetUserId);
         if (isMounted) {
+          // Users only have slots they have subscribed to and paid for (no free trial)
+          setSlots(remoteSlots || []);
           if (remoteSlots && remoteSlots.length > 0) {
-            setSlots(remoteSlots);
-            localStorage.setItem(`streamadda_slots_${targetUserId}`, JSON.stringify(remoteSlots));
+            setSelectedSlotId(remoteSlots[0].id);
           } else {
-            const initialUserSlot: Slot = {
-              ...DEFAULT_INITIAL_SLOT,
-              id: `slot_${targetUserId.slice(-6)}_${Date.now().toString().slice(-4)}`,
-              userId: targetUserId,
-              name: 'Live Slot 1',
-            };
-            await saveSlot(initialUserSlot).catch(() => {});
-            setSlots([initialUserSlot]);
-            localStorage.setItem(`streamadda_slots_${targetUserId}`, JSON.stringify([initialUserSlot]));
+            setSelectedSlotId('');
           }
+          localStorage.setItem(`streamadda_slots_${targetUserId}`, JSON.stringify(remoteSlots || []));
         }
 
         // 3. Fetch videos from MySQL strictly for this user (never expose other users' database videos)
@@ -374,18 +368,59 @@ export default function App() {
         .catch(() => {
           if (isMounted) setIsRealtimeConnected(false);
         });
-      fetchSlots()
-        .then((s) => {
-          if (isMounted && s && s.length > 0) setSlots(s);
-        })
-        .catch(() => {});
+
+      const currentUid = (user?.id && user.id !== 'usr_guest') ? user.id : undefined;
+      if (currentUid) {
+        fetchSlots(currentUid)
+          .then((s) => {
+            if (isMounted && s) setSlots(s);
+          })
+          .catch(() => {});
+      }
     }, 10000);
 
     return () => {
       isMounted = false;
       clearInterval(timer);
     };
-  }, []);
+  }, [user.id]);
+
+  // Automatic Slot Expiration Watchdog: Detects slot expiration in real-time, stops active broadcasts, and sets status to expired
+  useEffect(() => {
+    const watchdogTimer = setInterval(() => {
+      const now = Date.now();
+      setSlots((prev) => {
+        let hasChanges = false;
+        const checkedSlots = prev.map((s) => {
+          const isSlotExpired = Boolean(s.expiresAt) && s.expiresAt! > 0 && s.expiresAt! <= now;
+          if (isSlotExpired && (s.status !== 'expired' || s.streamStatus === 'Live')) {
+            hasChanges = true;
+            // Stop active cloud broadcast immediately
+            if (s.streamStatus === 'Live') {
+              stopCloudStream(s.id).catch(() => {});
+            }
+            const updatedExpired: Slot = {
+              ...s,
+              status: 'expired',
+              streamStatus: 'Off',
+            };
+            saveSlot(updatedExpired).catch(() => {});
+            return updatedExpired;
+          }
+          return s;
+        });
+
+        if (hasChanges) {
+          const uId = user.id || 'usr_guest';
+          localStorage.setItem(`streamadda_slots_${uId}`, JSON.stringify(checkedSlots));
+          return checkedSlots;
+        }
+        return prev;
+      });
+    }, 5000);
+
+    return () => clearInterval(watchdogTimer);
+  }, [user.id]);
 
   const handleToggleTheme = () => {
     const newTheme = isDark ? 'light' : 'dark';
@@ -447,22 +482,13 @@ export default function App() {
       localStorage.setItem(`streamadda_videos_${authedUser.id}`, JSON.stringify(userVideos || []));
 
       const userSlots = await fetchSlots(authedUser.id);
+      setSlots(userSlots || []);
       if (userSlots && userSlots.length > 0) {
-        setSlots(userSlots);
         setSelectedSlotId(userSlots[0].id);
-        localStorage.setItem(`streamadda_slots_${authedUser.id}`, JSON.stringify(userSlots));
       } else {
-        const userInitialSlot: Slot = {
-          ...DEFAULT_INITIAL_SLOT,
-          id: `slot_${authedUser.id.slice(-6)}_${Date.now().toString().slice(-4)}`,
-          userId: authedUser.id,
-          name: 'Live Slot 1',
-        };
-        await saveSlot(userInitialSlot).catch(() => {});
-        setSlots([userInitialSlot]);
-        setSelectedSlotId(userInitialSlot.id);
-        localStorage.setItem(`streamadda_slots_${authedUser.id}`, JSON.stringify([userInitialSlot]));
+        setSelectedSlotId('');
       }
+      localStorage.setItem(`streamadda_slots_${authedUser.id}`, JSON.stringify(userSlots || []));
     } catch (err) {
       console.error('Failed to load user-specific database records:', err);
     }
@@ -527,6 +553,19 @@ export default function App() {
             : s.streamStatus !== 'Live';
 
           if (willBeLive) {
+            // Guard: Prevent broadcasting on expired or unapproved slots
+            const isSlotExpired = s.status === 'expired' || (Boolean(s.expiresAt) && s.expiresAt! > 0 && s.expiresAt! <= Date.now());
+            if (isSlotExpired) {
+              alert('This slot subscription has expired. Please renew your subscription to stream live.');
+              const expiredSlot: Slot = { ...s, status: 'expired', streamStatus: 'Off' };
+              saveSlot(expiredSlot).catch(console.error);
+              return expiredSlot;
+            }
+            if (s.status === 'pending_approval') {
+              alert('This slot is pending payment approval. You can start broadcasting once verified by an admin.');
+              return s;
+            }
+
             setIsLiveMonitorOpen(true);
             setSelectedSlotId(slotId);
 
@@ -582,25 +621,52 @@ export default function App() {
     }
   };
 
-  const handleAddSlot = (slotName: string, scheduleStart?: boolean, startTime?: string) => {
+  const handleAddSlot = (
+    slotName: string,
+    scheduleStart?: boolean,
+    startTime?: string,
+    streamKey?: string,
+    videoId?: string,
+    platform?: StreamingPlatform,
+    planId?: string,
+    requireApproval: boolean = true
+  ): Slot => {
+    let days = 30;
+    const lowerPlan = String(planId || '').toLowerCase();
+    if (lowerPlan.includes('3 month') || lowerPlan.includes('quarter')) days = 90;
+    else if (lowerPlan.includes('month') || lowerPlan === 'months') days = 30;
+    else if (lowerPlan.includes('week') || lowerPlan === 'weeks') days = 7;
+    else if (lowerPlan.includes('day') || lowerPlan === 'days') days = 1;
+
+    const expiresAt = Date.now() + days * 24 * 3600 * 1000;
+    const d = new Date(expiresAt);
+    const expireOn = `${d.getDate()} ${d.toLocaleString('default', { month: 'short' })} ${d.getFullYear()} - 11:59 PM`;
+
+    const isUserAdmin = user?.role === 'admin';
+    const status: SlotStatus = (!requireApproval || isUserAdmin) ? 'active' : 'pending_approval';
+
     const newSlot: Slot = {
-      id: `${Math.random().toString(16).substring(2, 10)}${Date.now().toString(16)}`,
+      id: `slot-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      userId: user?.id,
       name: slotName,
-      status: 'active',
-      streamStatus: scheduleStart ? 'Scheduled' : 'Off',
+      status,
+      streamStatus: 'Off',
       scheduleStartEnabled: scheduleStart,
       streamStartTime: startTime || 'October 30th, 2026 06:00 PM',
-      expireOn: '29 Nov 2026 - 11:59 PM',
-      expiresAt: Date.now() + 30 * 24 * 3600 * 1000,
-      streamKey: `live-${Math.random().toString(36).substring(2, 12)}`,
-      platform: 'YouTube',
+      expireOn: status === 'pending_approval' ? 'Pending Approval' : expireOn,
+      expiresAt: status === 'pending_approval' ? 0 : expiresAt,
+      streamKey: streamKey?.trim() || '',
+      platform: platform || 'YouTube',
       streamLoop: true,
-      streamEndTime: 'November 29th, 2026 11:59 PM',
-      videoId: videos[0]?.id,
+      streamEndTime: expireOn,
+      videoId: videoId || videos[0]?.id,
+      subscriptionPlanId: planId || 'Months',
+      paymentStatus: status === 'pending_approval' ? 'pending' : 'approved',
     };
     setSlots((prev) => [newSlot, ...prev]);
     setSelectedSlotId(newSlot.id);
     saveSlot(newSlot).catch(console.error);
+    return newSlot;
   };
 
   const handleScheduleStream = (slotId: string, startTime: string) => {
@@ -675,25 +741,54 @@ export default function App() {
     );
   };
 
-  // Billing renewal/add with MySQL Backend recording
-  const handleRenewSlot = (slotId: string, period: BillingPeriod, count: number) => {
+  // Billing renewal/add with Subscription Plan and Payment Approval
+  const handleRenewSlot = (slotId: string, period: BillingPeriod, count: number, utrNumber?: string) => {
+    const isUserAdmin = user?.role === 'admin';
+    const addedDays = period === '3 Months' ? 90 : period === 'Months' ? 30 : period === 'Weeks' ? 7 : 1;
+    const plan = BILLING_PLANS[period];
+
     setSlots((prev) =>
       prev.map((s) => {
         if (s.id === slotId) {
-          const addedDays = period === '3 Months' ? 90 : period === 'Months' ? 30 : period === 'Weeks' ? 7 : 1;
-          const newExpiresAt = s.expiresAt + addedDays * count * 24 * 3600 * 1000;
-          const d = new Date(newExpiresAt);
-          const dateStr = `${d.getDate()} ${d.toLocaleString('default', { month: 'short' })} ${d.getFullYear()} - 04:29 PM`;
+          if (isUserAdmin) {
+            const currentExp = s.expiresAt && s.expiresAt > Date.now() ? s.expiresAt : Date.now();
+            const newExpiresAt = currentExp + addedDays * count * 24 * 3600 * 1000;
+            const d = new Date(newExpiresAt);
+            const dateStr = `${d.getDate()} ${d.toLocaleString('default', { month: 'short' })} ${d.getFullYear()} - 11:59 PM`;
+            const updatedSlot: Slot = {
+              ...s,
+              status: 'active',
+              paymentStatus: 'approved',
+              expiresAt: newExpiresAt,
+              expireOn: dateStr,
+              subscriptionPlanId: period,
+            };
+            saveSlot(updatedSlot).catch(console.error);
+
+            recordOrder({
+              id: `ord-${Date.now()}`,
+              userId: user.id,
+              slotId: s.id,
+              period,
+              count,
+              currency: 'INR',
+              amount: (plan?.priceINR || 1999) * count,
+              status: 'completed',
+              createdAt: new Date().toISOString(),
+            }).catch(console.error);
+
+            return updatedSlot;
+          }
+
+          // Non-admin renewal: requires admin payment approval
           const updatedSlot: Slot = {
             ...s,
-            status: 'active',
-            expiresAt: newExpiresAt,
-            expireOn: dateStr,
+            paymentStatus: 'pending',
+            subscriptionPlanId: period,
+            pendingUtrNumber: utrNumber,
           };
           saveSlot(updatedSlot).catch(console.error);
 
-          // Record order to database
-          const plan = BILLING_PLANS[period];
           recordOrder({
             id: `ord-${Date.now()}`,
             userId: user.id,
@@ -702,7 +797,7 @@ export default function App() {
             count,
             currency: 'INR',
             amount: (plan?.priceINR || 1999) * count,
-            status: 'completed',
+            status: 'pending',
             createdAt: new Date().toISOString(),
           }).catch(console.error);
 
@@ -713,9 +808,59 @@ export default function App() {
     );
   };
 
+  const handleApproveSlotFromAdmin = (slotId: string, planId?: string) => {
+    let days = 30;
+    const lowerPlan = String(planId || '').toLowerCase();
+    if (lowerPlan.includes('3 month') || lowerPlan.includes('quarter')) days = 90;
+    else if (lowerPlan.includes('month') || lowerPlan === 'months') days = 30;
+    else if (lowerPlan.includes('week') || lowerPlan === 'weeks') days = 7;
+    else if (lowerPlan.includes('day') || lowerPlan === 'days') days = 1;
+
+    setSlots((prev) =>
+      prev.map((s) => {
+        if (s.id === slotId || (slotId === '' && s.status === 'pending_approval')) {
+          const currentExp = s.expiresAt && s.expiresAt > Date.now() ? s.expiresAt : Date.now();
+          const newExpiresAt = currentExp + days * 24 * 3600 * 1000;
+          const d = new Date(newExpiresAt);
+          const dateStr = `${d.getDate()} ${d.toLocaleString('default', { month: 'short' })} ${d.getFullYear()} - 11:59 PM`;
+          const updated: Slot = {
+            ...s,
+            status: 'active',
+            paymentStatus: 'approved',
+            expiresAt: newExpiresAt,
+            expireOn: dateStr,
+          };
+          saveSlot(updated).catch(console.error);
+          return updated;
+        }
+        return s;
+      })
+    );
+
+    // Also immediately refresh user slots from backend
+    const currentUid = (user?.id && user.id !== 'usr_guest') ? user.id : undefined;
+    if (currentUid) {
+      fetchSlots(currentUid)
+        .then((s) => {
+          if (s && s.length > 0) setSlots(s);
+        })
+        .catch(() => {});
+    }
+  };
+
   const handleAddSlotsPurchased = (period: BillingPeriod, count: number) => {
+    const isUserAdmin = user?.role === 'admin';
     for (let i = 0; i < count; i++) {
-      handleAddSlot(`Slot ${Date.now() + i}`);
+      handleAddSlot(
+        `Slot ${Date.now() + i}`,
+        false,
+        undefined,
+        undefined,
+        undefined,
+        'YouTube',
+        period,
+        !isUserAdmin // require approval if not admin
+      );
     }
     const plan = BILLING_PLANS[period];
     recordOrder({
@@ -725,14 +870,14 @@ export default function App() {
       count,
       currency: 'INR',
       amount: (plan?.priceINR || 1999) * count,
-      status: 'completed',
+      status: isUserAdmin ? 'completed' : 'pending',
       createdAt: new Date().toISOString(),
     }).catch(console.error);
   };
 
-  const currentActiveSlot = slots.find((s) => s.id === selectedSlotId) || slots[0] || DEFAULT_INITIAL_SLOT;
-  const activeStreamingSlot = slots.find((s) => s.streamStatus === 'Live') || currentActiveSlot;
-  const currentSlotVideo = videos.find((v) => v.id === activeStreamingSlot.videoId);
+  const currentActiveSlot = slots.find((s) => s.id === selectedSlotId) || slots[0] || null;
+  const activeStreamingSlot = slots.find((s) => s.id === selectedSlotId) || slots.find((s) => s.streamStatus === 'Live') || currentActiveSlot;
+  const currentSlotVideo = videos.find((v) => v.id === activeStreamingSlot?.videoId) || videos[0];
 
   // Resolve Header Title based on current view
   const getViewTitle = () => {
@@ -890,24 +1035,49 @@ export default function App() {
           {currentView === 'live-slots' && (
             <LiveSlotsView
               slots={slots}
+              videos={videos}
+              user={user}
               onSelectSlot={handleSelectSlot}
               onNavigate={(view) => setCurrentView(view)}
               onToggleStream={handleToggleStream}
               onDeleteSlot={handleDeleteSlot}
               onAddSlot={handleAddSlot}
+              onRenewSlot={handleRenewSlot}
             />
           )}
 
           {currentView === 'slot-details' && (
-            <SlotDetailsView
-              slot={currentActiveSlot}
-              videos={videos}
-              onUpdateSlot={handleUpdateSlot}
-              onNavigate={(view) => setCurrentView(view)}
-              onToggleStream={handleToggleStream}
-              onScheduleStream={handleScheduleStream}
-              onCancelSchedule={handleCancelSchedule}
-            />
+            currentActiveSlot ? (
+              <SlotDetailsView
+                slot={currentActiveSlot}
+                videos={videos}
+                onUpdateSlot={handleUpdateSlot}
+                onNavigate={(view) => setCurrentView(view)}
+                onToggleStream={handleToggleStream}
+                onScheduleStream={handleScheduleStream}
+                onCancelSchedule={handleCancelSchedule}
+              />
+            ) : (
+              <div className="max-w-2xl mx-auto px-6 py-20 text-center flex flex-col items-center gap-5">
+                <div className="w-16 h-16 rounded-2xl bg-purple-50 dark:bg-purple-950/40 text-[#6320ee] dark:text-[#a855f7] flex items-center justify-center">
+                  <Radio className="w-8 h-8" />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <h3 className="text-xl font-bold text-slate-900 dark:text-white">
+                    No Live Slots Available
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md">
+                    You don't have any active streaming slots yet. Subscribe to a plan to start broadcasting 24/7 continuous loops with zero computer usage.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setCurrentView('live-slots')}
+                  className="px-6 py-2.5 text-xs font-bold text-white bg-[#6320ee] hover:bg-[#5218cc] rounded-xl shadow-md transition-all cursor-pointer"
+                >
+                  Go to Live Slots & Subscribe
+                </button>
+              </div>
+            )
           )}
 
           {currentView === 'videos' && (
@@ -945,6 +1115,7 @@ export default function App() {
               slots={slots}
               videos={videos}
               onNavigateToSlots={() => setCurrentView('live-slots')}
+              onApproveSlot={handleApproveSlotFromAdmin}
             />
           )}
         </main>
@@ -962,17 +1133,22 @@ export default function App() {
         onClose={() => setIsContactOpen(false)}
       />
 
-      <LiveStreamSimulatorModal
-        isOpen={isLiveMonitorOpen}
-        slot={activeStreamingSlot}
-        video={currentSlotVideo}
-        onClose={() => setIsLiveMonitorOpen(false)}
-        onStopStream={() => handleToggleStream(activeStreamingSlot.id)}
-        onUpdateStreamKey={(newKey) => {
-          const updated: Slot = { ...activeStreamingSlot, streamKey: newKey };
-          handleUpdateSlot(updated);
-        }}
-      />
+      {isLiveMonitorOpen && activeStreamingSlot && (
+        <LiveStreamSimulatorModal
+          isOpen={isLiveMonitorOpen}
+          slot={activeStreamingSlot}
+          video={currentSlotVideo}
+          slots={slots}
+          videos={videos}
+          onSelectSlot={(s) => setSelectedSlotId(s.id)}
+          onClose={() => setIsLiveMonitorOpen(false)}
+          onStopStream={() => handleToggleStream(activeStreamingSlot.id)}
+          onUpdateStreamKey={(newKey) => {
+            const updated: Slot = { ...activeStreamingSlot, streamKey: newKey };
+            handleUpdateSlot(updated);
+          }}
+        />
+      )}
 
       <AuthModal
         isOpen={isAuthModalOpen}

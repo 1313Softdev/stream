@@ -102,6 +102,7 @@ export interface VideoMetadata {
 // Extracts duration, resolution, size and real snapshot thumbnail
 export function extractVideoMetadata(file: File): Promise<VideoMetadata> {
   return new Promise((resolve) => {
+    let resolved = false;
     const sizeBytes = file.size;
     const sizeMB = sizeBytes / (1024 * 1024);
     const sizeFormatted = sizeMB >= 1000 ? `${(sizeMB / 1024).toFixed(1)} GB` : `${Math.round(sizeMB)} MB`;
@@ -119,6 +120,25 @@ export function extractVideoMetadata(file: File): Promise<VideoMetadata> {
     };
 
     const fallbackThumbnail = 'https://images.unsplash.com/photo-1574717024653-61fd2cf4d44d?w=800&auto=format&fit=crop&q=60';
+
+    const safeResolve = (meta: VideoMetadata) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      cleanUp();
+      resolve(meta);
+    };
+
+    // Safety timeout: if browser cannot decode video codec within 2.5s, return fallback metadata
+    const timer = setTimeout(() => {
+      safeResolve({
+        duration: '10:00',
+        resolution: '1080p 60fps',
+        sizeBytes,
+        sizeFormatted,
+        thumbnailUrl: fallbackThumbnail,
+      });
+    }, 2500);
 
     video.onloadedmetadata = () => {
       // Seek to 1s or 20% to capture representative thumbnail
@@ -156,8 +176,7 @@ export function extractVideoMetadata(file: File): Promise<VideoMetadata> {
           thumbnailUrl = canvas.toDataURL('image/jpeg', 0.65);
         }
 
-        cleanUp();
-        resolve({
+        safeResolve({
           duration,
           resolution,
           sizeBytes,
@@ -166,8 +185,7 @@ export function extractVideoMetadata(file: File): Promise<VideoMetadata> {
         });
       } catch (err) {
         console.warn('Canvas thumbnail capture error:', err);
-        cleanUp();
-        resolve({
+        safeResolve({
           duration: '10:00',
           resolution: '1080p 60fps',
           sizeBytes,
@@ -178,8 +196,7 @@ export function extractVideoMetadata(file: File): Promise<VideoMetadata> {
     };
 
     video.onerror = () => {
-      cleanUp();
-      resolve({
+      safeResolve({
         duration: '12:30',
         resolution: '1080p 60fps',
         sizeBytes,

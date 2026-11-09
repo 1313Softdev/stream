@@ -128,7 +128,10 @@ function getIngestUrl(platform: string, rawStreamKey: string, customUrl?: string
 
   // If custom RTMP URL provided
   if (customUrl && customUrl.trim()) {
-    const base = customUrl.trim().replace(/\/+$/, '');
+    let base = customUrl.trim().replace(/\/+$/, '');
+    if (base.toLowerCase().includes('youtube.com') && base.startsWith('rtmps://')) {
+      base = base.replace('rtmps://', 'rtmp://').replace(':443', '');
+    }
     return `${base}/${cleanKey}`;
   }
 
@@ -243,6 +246,27 @@ app.post('/api/stream/start', async (req, res) => {
   const cleanedKey = cleanStreamKey(streamKey);
   if (!cleanedKey) {
     return res.status(400).json({ error: 'Stream key is required to broadcast to YouTube' });
+  }
+
+  // Ensure slot has approved subscription and is not expired
+  try {
+    const slotData = await getSlot(slotId);
+    if (slotData) {
+      if (slotData.status === 'pending_approval') {
+        return res.status(403).json({
+          success: false,
+          error: 'This slot is pending payment approval. Please wait for admin approval before broadcasting.',
+        });
+      }
+      if (slotData.status === 'expired' || (slotData.expiresAt && slotData.expiresAt > 0 && slotData.expiresAt < Date.now())) {
+        return res.status(403).json({
+          success: false,
+          error: 'This slot subscription has expired. Please renew your slot subscription to stream live.',
+        });
+      }
+    }
+  } catch (slotCheckErr) {
+    console.warn('[Stream Start] Slot check warning:', slotCheckErr);
   }
 
   // Parse and validate stream quality & bitrate parameters
@@ -394,6 +418,9 @@ app.post('/api/stream/start', async (req, res) => {
   }
 
   const child = spawn(getFfmpegPath(), ffmpegArgs);
+  console.log(`[Slot ${slotId}] FFmpeg process spawned (PID: ${child.pid})`);
+  console.log(`[Slot ${slotId}] Destination: ${targetUrl.replace(cleanedKey, '***' + cleanedKey.slice(-4))}`);
+  console.log(`[Slot ${slotId}] Video input: ${resolvedVideo}`);
 
   const session: StreamSession = {
     slotId,
@@ -464,6 +491,14 @@ app.post('/api/stream/start', async (req, res) => {
         session.status = 'error';
         session.lastError = 'Video encoder error: Video dimensions or parameters were incompatible. Please use default 720p (2500 Kbps) settings or select a standard MP4 video.';
       } else if (
+        lower.includes('failed to resolve hostname') ||
+        lower.includes('nodename nor servname') ||
+        lower.includes('network is unreachable') ||
+        lower.includes('no route to host')
+      ) {
+        session.status = 'error';
+        session.lastError = 'Network error: Cannot resolve YouTube RTMP servers. Please check your internet connection.';
+      } else if (
         lower.includes('input/output error') ||
         lower.includes('io error') ||
         lower.includes('server error') ||
@@ -477,9 +512,6 @@ app.post('/api/stream/start', async (req, res) => {
         lower.includes('rtmp_connect') ||
         lower.includes('end of file') ||
         lower.includes('error writing trailer') ||
-        lower.includes('failed to resolve hostname') ||
-        lower.includes('nodename nor servname') ||
-        lower.includes('network is unreachable') ||
         (lower.includes('rtmp') && (lower.includes('cannot open') || lower.includes('failed') || lower.includes('error')))
       ) {
         session.status = 'error';
@@ -546,6 +578,11 @@ app.post('/api/stream/start', async (req, res) => {
         session.lastError = 'YouTube Live rejected connection: Invalid or inactive Stream Key. Please copy your active Stream Key from YouTube Studio (studio.youtube.com/channel/live) and paste it into the slot settings.';
       }
     }
+    console.log(`[Slot ${slotId}] FFmpeg process closed with code ${code}. Status: ${session.status}, Error: ${session.lastError || 'None'}`);
+    if (code !== 0 && session.logs.length > 0) {
+      console.log(`[Slot ${slotId}] Last FFmpeg logs before close:`);
+      session.logs.slice(-5).forEach(l => console.log(`   > ${l}`));
+    }
     session.logs.push(`[${new Date().toLocaleTimeString()}] Stream process ended (code ${code})`);
   });
 
@@ -578,6 +615,42 @@ app.post('/api/stream/stop', (req, res) => {
 
   return res.json({ success: true, message: 'Stream stopped successfully' });
 });
+
+// Background Watchdog: Auto-detect slot expiration and terminate active live streams immediately
+setInterval(async () => {
+  try {
+    const allSlots = await getSlots();
+    const now = Date.now();
+    for (const slot of allSlots) {
+      const isExpired = Boolean(slot.expiresAt) && slot.expiresAt > 0 && slot.expiresAt <= now;
+      if (isExpired) {
+        // If an active stream process is running for this slot, terminate it immediately
+        const session = activeStreams.get(slot.id);
+        if (session) {
+          console.log(`[Watchdog] Slot ${slot.id} ("${slot.name}") expired. Terminating active live broadcast.`);
+          try {
+            session.process.kill('SIGTERM');
+          } catch {}
+          session.status = 'stopped';
+          activeStreams.delete(slot.id);
+        }
+
+        // Update database record if not already marked expired or if streamStatus is still Live
+        if (slot.status !== 'expired' || slot.streamStatus === 'Live') {
+          slot.status = 'expired';
+          slot.streamStatus = 'Off';
+          await upsertSlot({
+            ...slot,
+            status: 'expired',
+            streamStatus: 'Off',
+          }).catch(() => {});
+        }
+      }
+    }
+  } catch (err) {
+    // Avoid unhandled errors in interval
+  }
+}, 10000);
 
 // 3. Get Real-time Status & Console Logs
 app.get('/api/stream/status/:slotId', (req, res) => {
@@ -1343,7 +1416,7 @@ app.post('/api/payments/upload-proof', (req, res) => {
 
 app.post('/api/payments/submit-utr', async (req, res) => {
   try {
-    const { userId, userName, userEmail, planId, slotId, amount, currency, gatewayType, utrNumber, proofImageUrl } = req.body;
+    let { userId, userName, userEmail, planId, slotId, amount, currency, gatewayType, utrNumber, proofImageUrl } = req.body;
 
     if (!userId || !planId || !amount) {
       return res.status(400).json({ success: false, error: 'userId, planId, and amount are required' });
@@ -1353,14 +1426,23 @@ app.post('/api/payments/submit-utr', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Please enter a valid 12-digit UPI UTR / Transaction Reference' });
     }
 
+    // Lookup user in database if userName or userEmail is missing or default
+    if ((!userName || userName === 'Streamer' || !userEmail) && userId) {
+      const u = await getUser(userId);
+      if (u) {
+        if (!userName || userName === 'Streamer') userName = u.name;
+        if (!userEmail) userEmail = u.email;
+      }
+    }
+
     const gateways = await getPaymentGateways();
     const gateway = gateways.find((g) => g.id === gatewayType);
     const autoVerify = Boolean(gateway?.autoVerify);
 
     const tx = await createPaymentTransaction({
       userId,
-      userName,
-      userEmail,
+      userName: userName || 'Registered Creator',
+      userEmail: userEmail || '',
       planId,
       slotId,
       amount,
@@ -1416,7 +1498,7 @@ app.post('/api/admin/transactions/simulate-auto-verify', async (req, res) => {
   try {
     const { utrNumber } = req.body;
     const pending = await getAllPaymentTransactions('pending');
-    let target = utrNumber ? pending.find((t) => t.utrNumber === utrNumber) : pending[0];
+    let target = utrNumber ? pending.find((t) => t.utrNumber === utrNumber || (t as any).utr === utrNumber) : pending[0];
     if (!target) {
       return res.status(404).json({ success: false, error: 'No pending transaction found to auto-verify' });
     }
