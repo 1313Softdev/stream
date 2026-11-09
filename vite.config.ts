@@ -1,14 +1,37 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import {defineConfig} from 'vite';
+import { defineConfig, Plugin } from 'vite';
 
 const currentDir = import.meta.dirname ?? path.dirname(fileURLToPath(import.meta.url));
 
+function copyStaticPublicPlugin(): Plugin {
+  return {
+    name: 'copy-static-public-without-uploads',
+    closeBundle() {
+      const publicDir = path.resolve(currentDir, 'public');
+      const distDir = path.resolve(currentDir, 'dist');
+      if (!fs.existsSync(publicDir) || !fs.existsSync(distDir)) return;
+
+      const entries = fs.readdirSync(publicDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name === 'uploads') continue; // Never duplicate uploaded videos into dist
+        const srcPath = path.join(publicDir, entry.name);
+        const destPath = path.join(distDir, entry.name);
+        fs.cpSync(srcPath, destPath, { recursive: true, force: true });
+      }
+    },
+  };
+}
+
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), copyStaticPublicPlugin()],
+    build: {
+      copyPublicDir: false,
+    },
     resolve: {
       alias: {
         '@': path.resolve(currentDir, '.'),
