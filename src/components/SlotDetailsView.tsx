@@ -1745,7 +1745,7 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
               </button>
             </div>
 
-            <div className="overflow-y-auto flex flex-col gap-3 pr-1">
+            <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pr-1">
               {videos.length === 0 ? (
                 <div className="py-12 text-center text-slate-500">
                   <Film className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-600 mb-2" />

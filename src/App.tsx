@@ -101,6 +101,10 @@ export default function App() {
   // Inactivity tracking reference
   const lastActivityRef = useRef<number>(Date.now());
 
+  // Pending view navigation after login/registration
+  const pendingViewRef = useRef<AppView | null>(null);
+  const pendingPlanPeriodRef = useRef<BillingPeriod | null>(null);
+
   // MySQL Backend Database & Authentication status
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const [isAuthenticatedGoogle, setIsAuthenticatedGoogle] = useState(false);
@@ -460,6 +464,19 @@ export default function App() {
     }
   };
 
+  const handleGoToSlots = (preferredPlan?: BillingPeriod) => {
+    if (preferredPlan) {
+      pendingPlanPeriodRef.current = preferredPlan;
+    }
+    if (isAuthenticated) {
+      setMode('app');
+      setCurrentView('live-slots');
+    } else {
+      pendingViewRef.current = 'live-slots';
+      handleOpenAuth('register');
+    }
+  };
+
   const handleAuthSuccess = async (authedUser: UserProfile) => {
     localStorage.setItem('streamadda_last_active', Date.now().toString());
     lastActivityRef.current = Date.now();
@@ -467,9 +484,12 @@ export default function App() {
     setIsAuthenticated(true);
     setIsAuthModalOpen(false);
     setShowInactivityModal(false);
-    // Direct admin users to Admin Control Center, regular users to Dashboard
+
+    // Route to pending view (e.g. live-slots) if clicked from landing, or admin / live-slots
+    const targetView: AppView = pendingViewRef.current || (authedUser.role === 'admin' ? 'admin' : 'live-slots');
+    pendingViewRef.current = null;
     setMode('app');
-    setCurrentView(authedUser.role === 'admin' ? 'admin' : 'dashboard');
+    setCurrentView(targetView);
     if (authedUser.theme) {
       setIsDark(authedUser.theme === 'dark');
     }
@@ -931,6 +951,7 @@ export default function App() {
               handleOpenAuth('login');
             }
           }}
+          onGoToSlots={handleGoToSlots}
           onOpenContact={() => setIsContactOpen(true)}
           onOpenAuth={(authMode) => handleOpenAuth(authMode || 'login')}
           isAuthenticated={isAuthenticated}
@@ -1043,6 +1064,7 @@ export default function App() {
               onDeleteSlot={handleDeleteSlot}
               onAddSlot={handleAddSlot}
               onRenewSlot={handleRenewSlot}
+              initialPlanPeriod={pendingPlanPeriodRef.current || undefined}
             />
           )}
 

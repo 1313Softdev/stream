@@ -17,13 +17,18 @@ import {
   ChevronUp,
   Sparkles,
   LogOut,
+  Radio,
+  Menu,
+  X,
+  LayoutDashboard,
 } from 'lucide-react';
 import { PantherLogo } from './PantherLogo';
 import { BILLING_PLANS } from '../config/billingPlans';
-import { UserProfile } from '../types';
+import { UserProfile, BillingPeriod } from '../types';
 
 interface LandingPageViewProps {
   onGoToDashboard: () => void;
+  onGoToSlots?: (preferredPlan?: BillingPeriod) => void;
   onOpenContact: () => void;
   onOpenAuth?: (mode?: 'login' | 'register') => void;
   isAuthenticated?: boolean;
@@ -33,6 +38,7 @@ interface LandingPageViewProps {
 
 export const LandingPageView: React.FC<LandingPageViewProps> = ({
   onGoToDashboard,
+  onGoToSlots,
   onOpenContact,
   onOpenAuth,
   isAuthenticated,
@@ -43,7 +49,27 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
   const [isPlayingDemo, setIsPlayingDemo] = useState(false);
   const [isMutedDemo, setIsMutedDemo] = useState(true);
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(0);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  const handleScrollTo = (e: React.MouseEvent, id: string) => {
+    e.preventDefault();
+    setIsMobileMenuOpen(false);
+    const target = document.getElementById(id);
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      window.history.pushState(null, '', `#${id}`);
+    }
+  };
+
+  const handleOpenSlots = (plan?: BillingPeriod) => {
+    setIsMobileMenuOpen(false);
+    if (onGoToSlots) {
+      onGoToSlots(plan);
+    } else {
+      onGoToDashboard();
+    }
+  };
 
   const togglePlay = () => {
     if (videoRef.current) {
@@ -97,32 +123,60 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
         </div>
 
         {/* Center: Navigation Links */}
-        <nav className="hidden md:flex items-center gap-8 text-sm font-semibold text-slate-700 dark:text-slate-200">
-          <a href="#home" className="text-[#6320ee] dark:text-[#a855f7] border-b-2 border-[#6320ee] pb-0.5">
-            Home
-          </a>
-          <a href="#how-it-works" className="hover:text-[#6320ee] dark:hover:text-[#a855f7] transition-colors">
-            How it Works
-          </a>
-          <a href="#pricing" className="hover:text-[#6320ee] dark:hover:text-[#a855f7] transition-colors">
-            Pricing
-          </a>
-          <a href="#faq" className="hover:text-[#6320ee] dark:hover:text-[#a855f7] transition-colors">
-            FAQ
-          </a>
+        <nav className="hidden md:flex items-center gap-7 text-sm font-semibold text-slate-700 dark:text-slate-200">
           <button
+            type="button"
+            onClick={(e) => handleScrollTo(e, 'home')}
+            className="text-[#6320ee] dark:text-[#a855f7] border-b-2 border-[#6320ee] pb-0.5 cursor-pointer"
+          >
+            Home
+          </button>
+          <button
+            type="button"
+            onClick={(e) => handleScrollTo(e, 'how-it-works')}
+            className="hover:text-[#6320ee] dark:hover:text-[#a855f7] transition-colors cursor-pointer"
+          >
+            How it Works
+          </button>
+          <button
+            type="button"
+            onClick={(e) => handleScrollTo(e, 'pricing')}
+            className="hover:text-[#6320ee] dark:hover:text-[#a855f7] transition-colors cursor-pointer"
+          >
+            Pricing
+          </button>
+          <button
+            type="button"
+            onClick={(e) => handleScrollTo(e, 'faq')}
+            className="hover:text-[#6320ee] dark:hover:text-[#a855f7] transition-colors cursor-pointer"
+          >
+            FAQ
+          </button>
+          <button
+            type="button"
             onClick={onOpenContact}
             className="hover:text-[#6320ee] dark:hover:text-[#a855f7] transition-colors cursor-pointer"
           >
             Contact Us
           </button>
+
+          {/* Quick Direct Link to Live Slots */}
+          <button
+            type="button"
+            onClick={() => handleOpenSlots()}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold text-[#6320ee] dark:text-[#a855f7] bg-purple-50 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800 hover:bg-purple-100 dark:hover:bg-purple-900/60 transition-colors cursor-pointer shadow-2xs"
+          >
+            <Radio className="w-3.5 h-3.5 text-red-500 animate-pulse" />
+            <span>Live Slots</span>
+          </button>
         </nav>
 
         {/* Right: Auth / User CTA & Social Icons */}
-        <div className="flex items-center gap-3 sm:gap-5">
+        <div className="flex items-center gap-2.5 sm:gap-4">
           {isAuthenticated && user ? (
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2">
               <button
+                type="button"
                 onClick={onGoToDashboard}
                 className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#6320ee] hover:bg-[#5218cc] text-white shadow-xs transition-all cursor-pointer text-left"
                 title="Go to App Dashboard"
@@ -136,8 +190,19 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
 
+              <button
+                type="button"
+                onClick={() => handleOpenSlots()}
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+                title="Go directly to Live Slots"
+              >
+                <Radio className="w-3.5 h-3.5" />
+                <span>Slots</span>
+              </button>
+
               {onLogout && (
                 <button
+                  type="button"
                   onClick={onLogout}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 border border-rose-200 dark:border-rose-800/60 rounded-lg shadow-2xs transition-colors cursor-pointer"
                   title="Log out of account"
@@ -151,12 +216,14 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
             onOpenAuth && (
               <div className="flex items-center gap-2">
                 <button
+                  type="button"
                   onClick={() => onOpenAuth('login')}
                   className="text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200 hover:text-[#6320ee] dark:hover:text-[#a855f7] px-2.5 py-1.5 cursor-pointer transition-colors"
                 >
                   Sign In
                 </button>
                 <button
+                  type="button"
                   onClick={() => onOpenAuth('register')}
                   className="px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-bold text-white bg-[#6320ee] hover:bg-[#5218cc] shadow-xs transition-all cursor-pointer"
                 >
@@ -166,7 +233,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
             )
           )}
 
-          <div className="hidden sm:flex items-center gap-3 text-slate-600 dark:text-slate-400">
+          <div className="hidden lg:flex items-center gap-3 text-slate-600 dark:text-slate-400 ml-1">
             <a href="https://youtube.com" target="_blank" rel="noreferrer" className="hover:text-red-600 transition-colors">
               <Youtube className="w-5 h-5" />
             </a>
@@ -177,8 +244,72 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               <Instagram className="w-4 h-4" />
             </a>
           </div>
+
+          {/* Mobile Hamburger Toggle */}
+          <button
+            type="button"
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            className="md:hidden p-1.5 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer transition-colors"
+            aria-label="Toggle navigation menu"
+          >
+            {isMobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+          </button>
         </div>
       </header>
+
+      {/* Mobile Drawer Dropdown */}
+      {isMobileMenuOpen && (
+        <div className="md:hidden sticky top-[65px] z-30 bg-white/98 dark:bg-slate-900/98 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-6 py-4 flex flex-col gap-2.5 shadow-xl animate-in slide-in-from-top-2 duration-150">
+          <button
+            type="button"
+            onClick={(e) => handleScrollTo(e, 'home')}
+            className="text-left py-2 font-semibold text-slate-800 dark:text-slate-200 hover:text-[#6320ee]"
+          >
+            Home
+          </button>
+          <button
+            type="button"
+            onClick={(e) => handleScrollTo(e, 'how-it-works')}
+            className="text-left py-2 font-semibold text-slate-800 dark:text-slate-200 hover:text-[#6320ee]"
+          >
+            How it Works
+          </button>
+          <button
+            type="button"
+            onClick={(e) => handleScrollTo(e, 'pricing')}
+            className="text-left py-2 font-semibold text-slate-800 dark:text-slate-200 hover:text-[#6320ee]"
+          >
+            Pricing Plans
+          </button>
+          <button
+            type="button"
+            onClick={(e) => handleScrollTo(e, 'faq')}
+            className="text-left py-2 font-semibold text-slate-800 dark:text-slate-200 hover:text-[#6320ee]"
+          >
+            Frequently Asked Questions
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsMobileMenuOpen(false);
+              onOpenContact();
+            }}
+            className="text-left py-2 font-semibold text-slate-800 dark:text-slate-200 hover:text-[#6320ee]"
+          >
+            Contact Support
+          </button>
+          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={() => handleOpenSlots()}
+              className="w-full py-2.5 rounded-xl font-bold text-xs text-white bg-[#6320ee] hover:bg-[#5218cc] flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+            >
+              <Radio className="w-4 h-4 text-red-400 animate-pulse" />
+              <span>Go to Live Slots</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Hero Section matching Screenshot 7 */}
       <section
@@ -201,12 +332,14 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               <p>No studio, no webcam — just upload and go live.</p>
             </div>
 
-            <div className="pt-4">
+            <div className="pt-4 flex flex-wrap items-center gap-3">
               <button
-                onClick={() => (isAuthenticated ? onGoToDashboard() : onOpenAuth ? onOpenAuth('register') : onGoToDashboard())}
-                className="px-8 py-4 rounded-full text-base font-bold text-[#5b21b6] bg-white hover:bg-purple-50 shadow-xl hover:scale-105 active:scale-95 transition-all cursor-pointer"
+                type="button"
+                onClick={() => handleOpenSlots()}
+                className="px-8 py-4 rounded-full text-base font-bold text-[#5b21b6] bg-white hover:bg-purple-50 shadow-xl hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-2.5"
               >
-                {isAuthenticated ? 'Open Dashboard' : 'Get Started Now'}
+                <Radio className="w-5 h-5 text-red-600 animate-pulse" />
+                <span>{isAuthenticated ? 'Go to Live Slots' : 'Start Live Streaming Now'}</span>
               </button>
             </div>
           </div>
@@ -225,7 +358,8 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
             <div className="flex items-start justify-center gap-6 sm:gap-8 w-full">
               {/* Step 1 */}
               <button
-                onClick={() => (isAuthenticated ? onGoToDashboard() : onOpenAuth ? onOpenAuth('register') : onGoToDashboard())}
+                type="button"
+                onClick={() => (isAuthenticated ? handleOpenSlots() : onOpenAuth ? onOpenAuth('register') : handleOpenSlots())}
                 className="flex flex-col items-center gap-3 max-w-[110px] text-center cursor-pointer group hover:scale-105 transition-transform"
               >
                 <div className="w-16 h-16 rounded-full bg-white/15 backdrop-blur-xs border border-white/20 flex items-center justify-center text-white shadow-inner group-hover:bg-white/25 transition-colors">
@@ -238,26 +372,34 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               </button>
 
               {/* Step 2 */}
-              <div className="flex flex-col items-center gap-3 max-w-[110px]">
-                <div className="w-16 h-16 rounded-full bg-white/15 backdrop-blur-xs border border-white/20 flex items-center justify-center text-white shadow-inner">
+              <button
+                type="button"
+                onClick={() => handleOpenSlots()}
+                className="flex flex-col items-center gap-3 max-w-[110px] text-center cursor-pointer group hover:scale-105 transition-transform"
+              >
+                <div className="w-16 h-16 rounded-full bg-white/15 backdrop-blur-xs border border-white/20 flex items-center justify-center text-white shadow-inner group-hover:bg-white/25 transition-colors">
                   <Upload className="w-7 h-7" />
                 </div>
                 <div className="flex flex-col gap-1">
                   <h4 className="text-xs font-bold text-white leading-tight">Upload Videos</h4>
                   <p className="text-[11px] text-purple-200 leading-tight">Upload Pre-Recorded Videos in Gallery</p>
                 </div>
-              </div>
+              </button>
 
               {/* Step 3 */}
-              <div className="flex flex-col items-center gap-3 max-w-[110px]">
-                <div className="w-16 h-16 rounded-full bg-white/15 backdrop-blur-xs border border-white/20 flex items-center justify-center text-white shadow-inner">
+              <button
+                type="button"
+                onClick={() => handleOpenSlots()}
+                className="flex flex-col items-center gap-3 max-w-[110px] text-center cursor-pointer group hover:scale-105 transition-transform"
+              >
+                <div className="w-16 h-16 rounded-full bg-white/15 backdrop-blur-xs border border-white/20 flex items-center justify-center text-white shadow-inner group-hover:bg-white/25 transition-colors">
                   <Play className="w-7 h-7 fill-current ml-0.5" />
                 </div>
                 <div className="flex flex-col gap-1">
                   <h4 className="text-xs font-bold text-white leading-tight">Start Streaming</h4>
                   <p className="text-[11px] text-purple-200 leading-tight">Just Click To Start Stream</p>
                 </div>
-              </div>
+              </button>
             </div>
           </div>
         </div>
@@ -473,14 +615,15 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
 
                   <div className="pt-6">
                     <button
-                      onClick={() => (isAuthenticated ? onGoToDashboard() : onOpenAuth ? onOpenAuth('register') : onGoToDashboard())}
+                      type="button"
+                      onClick={() => handleOpenSlots(plan.period as BillingPeriod)}
                       className={`w-full py-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                         isPopular
                           ? 'bg-[#6320ee] text-white hover:bg-[#5218cc] shadow-xs'
                           : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white hover:bg-slate-200 dark:hover:bg-slate-700'
                       }`}
                     >
-                      {isAuthenticated ? 'Select Plan' : 'Choose Plan'}
+                      {isAuthenticated ? `Select ${plan.title}` : `Choose ${plan.durationLabel} Plan`}
                     </button>
                   </div>
                 </div>
@@ -555,11 +698,11 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               Features
             </h4>
             <div className="flex flex-col gap-2 text-xs text-purple-100">
-              <a href="#home" className="hover:text-white">Home</a>
-              <a href="#how-it-works" className="hover:text-white">How it Works</a>
-              <a href="#pricing" className="hover:text-white">Pricing</a>
-              <button onClick={onGoToDashboard} className="text-left hover:text-white cursor-pointer">Live Slots</button>
-              <button onClick={onGoToDashboard} className="text-left hover:text-white cursor-pointer">Cloud Video Storage</button>
+              <button type="button" onClick={(e) => handleScrollTo(e, 'home')} className="text-left hover:text-white cursor-pointer">Home</button>
+              <button type="button" onClick={(e) => handleScrollTo(e, 'how-it-works')} className="text-left hover:text-white cursor-pointer">How it Works</button>
+              <button type="button" onClick={(e) => handleScrollTo(e, 'pricing')} className="text-left hover:text-white cursor-pointer">Pricing</button>
+              <button type="button" onClick={() => handleOpenSlots()} className="text-left hover:text-white cursor-pointer font-bold text-amber-300">Live Slots</button>
+              <button type="button" onClick={onGoToDashboard} className="text-left hover:text-white cursor-pointer">Cloud Video Storage</button>
             </div>
           </div>
 
