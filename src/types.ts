@@ -149,6 +149,12 @@ export interface SiteMetaSettings {
   google_drive_api_key?: string;
   google_drive_service_account_json?: string;
   default_payment_gateway?: string;
+  // Homepage Live Video / "How To Live" Customization
+  home_live_video_url?: string;
+  home_live_video_title?: string;
+  home_live_video_subtitle?: string;
+  home_live_video_badge?: string;
+  home_live_video_poster?: string;
 }
 
 export interface GoogleDriveItem {

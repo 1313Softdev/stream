@@ -22,6 +22,7 @@ interface PaymentModalProps {
   planTitle: string;
   planId: string;
   slotId?: string;
+  slotName?: string;
   amount: number;
   currency: 'INR' | 'USD';
   user: UserProfile;
@@ -34,6 +35,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   planTitle,
   planId,
   slotId,
+  slotName,
   amount,
   currency,
   user,
@@ -146,6 +148,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         gatewayType: currentGateway.id,
         utrNumber: cleanUtr,
         proofImageUrl: proofUrl,
+        notes: slotName || planTitle,
       });
 
       setIsSubmitted(true);

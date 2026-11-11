@@ -204,6 +204,7 @@ export async function recordOrder(order: {
   currency: 'INR' | 'USD';
   amount: number;
   status: string;
+  utrNumber?: string;
   createdAt?: string;
 }): Promise<any> {
   const res = await fetch('/api/orders', {
@@ -399,6 +400,7 @@ export async function submitPaymentUtr(payload: {
   gatewayType: 'upi' | 'gpay' | 'paytm' | 'razorpay';
   utrNumber: string;
   proofImageUrl?: string;
+  notes?: string;
 }): Promise<{ transaction: PaymentTransaction; message: string }> {
   const res = await fetch('/api/payments/submit-utr', {
     method: 'POST',
@@ -408,6 +410,19 @@ export async function submitPaymentUtr(payload: {
   const data = await res.json();
   if (!res.ok || !data.success) throw new Error(data.error || 'Failed to submit UTR');
   return data;
+}
+
+export async function fetchUserTransactions(userId: string): Promise<PaymentTransaction[]> {
+  try {
+    const res = await fetch(`/api/payments/user-transactions?userId=${encodeURIComponent(userId)}`, {
+      headers: authHeaders(),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.transactions || [];
+  } catch {
+    return [];
+  }
 }
 
 export async function fetchAdminTransactions(statusFilter = 'all'): Promise<PaymentTransaction[]> {
@@ -485,4 +500,35 @@ export async function testGDriveConnection(apiKey: string, folderId?: string): P
     body: JSON.stringify({ apiKey, folderId }),
   });
   return res.json();
+}
+
+/**
+ * Parses and extracts an 11-character YouTube video ID from various YouTube URL formats
+ * (watch?v=, youtu.be/, live/, embed/, shorts/)
+ */
+export function getYouTubeVideoId(url?: string): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  const regExp = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?|live|shorts|watch)\b.*?v=|(?:v|e(?:mbed)?|live|shorts)\/)|youtu\.be\/)([^"&?\/\s]{11})/i;
+  const match = trimmed.match(regExp);
+  if (match && match[1]) return match[1];
+  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
+  return null;
+}
+
+/**
+ * Formats a slot expiration timestamp into a readable date and exact time string
+ * e.g. "12 Nov 2026 - 06:35 AM"
+ */
+export function formatSlotExpirationDate(timestamp: number): string {
+  const d = new Date(timestamp);
+  const day = d.getDate();
+  const month = d.toLocaleString('en-US', { month: 'short' });
+  const year = d.getFullYear();
+  let hours = d.getHours();
+  const minutes = d.getMinutes().toString().padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  const hourStr = hours.toString().padStart(2, '0');
+  return `${day} ${month} ${year} - ${hourStr}:${minutes} ${ampm}`;
 }

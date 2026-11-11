@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { Minus, Plus, X, ChevronDown, CheckCircle2, ShieldCheck, QrCode } from 'lucide-react';
-import { BillingPeriod, Slot, UserProfile } from '../types';
+import { BillingPeriod, Slot, UserProfile, SubscriptionPlanItem } from '../types';
 import { BILLING_PLANS } from '../config/billingPlans';
 import { PaymentModal } from './PaymentModal';
 
 interface BillingViewProps {
   slots: Slot[];
   user: UserProfile;
-  onRenewSlot: (slotId: string, period: BillingPeriod, count: number) => void;
+  plans?: SubscriptionPlanItem[];
+  onRenewSlot: (slotId: string, period: BillingPeriod, count: number, utrNumber?: string) => void;
   onAddSlotsPurchased: (period: BillingPeriod, count: number) => void;
   onOpenContact: () => void;
 }
@@ -15,11 +16,12 @@ interface BillingViewProps {
 export const BillingView: React.FC<BillingViewProps> = ({
   slots,
   user,
+  plans,
   onRenewSlot,
   onAddSlotsPurchased,
   onOpenContact,
 }) => {
-  const [selectedPeriod, setSelectedPeriod] = useState<BillingPeriod>('3 Months');
+  const [selectedPlanId, setSelectedPlanId] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'Add Slots' | 'Renew Slots'>('Renew Slots');
   const [currency, setCurrency] = useState<'INR' | 'USD'>('INR');
 
@@ -38,8 +40,19 @@ export const BillingView: React.FC<BillingViewProps> = ({
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState<boolean>(false);
   const [submittedUtr, setSubmittedUtr] = useState<string>('');
 
-  const planInfo = BILLING_PLANS[selectedPeriod] || BILLING_PLANS['3 Months'];
-  const unitPrice = currency === 'INR' ? planInfo.priceINR : planInfo.priceUSD;
+  const activePlans: SubscriptionPlanItem[] = (plans && plans.length > 0)
+    ? plans.filter((p) => p.isActive)
+    : [
+        { id: 'plan_days', title: 'Daily Trial / Event', period: 'Days', durationLabel: '1 Day', durationDays: 1, priceINR: 99, priceUSD: 1.5, storageGB: 1, maxSlots: 1, features: ['24 Hours nonstop live streaming', '1GB Cloud video storage', 'Perfect for one-off broadcasts or webinars'], isActive: true, isPopular: false, displayOrder: 1 },
+        { id: 'plan_weeks', title: 'Weekly Boost', period: 'Weeks', durationLabel: '1 Week', durationDays: 7, priceINR: 299, priceUSD: 4, storageGB: 2, maxSlots: 1, features: ['24/7 Continuous streaming for 7 days', '2GB Cloud video storage', 'Instant activation upon order', 'All platforms supported'], isActive: true, isPopular: false, displayOrder: 2 },
+        { id: 'plan_months', title: 'Monthly Standard', period: 'Months', durationLabel: '1 Month', durationDays: 30, priceINR: 799, priceUSD: 10, storageGB: 4, maxSlots: 1, features: ['24/7 Non-stop continuous loop streaming', '4GB Cloud video storage per slot', 'Full 1080p 60fps broadcast quality', 'Automated schedule & loop timer', 'Standard support'], isActive: true, isPopular: false, displayOrder: 3 },
+        { id: 'plan_3months', title: 'Quarterly Supercharged', period: '3 Months', durationLabel: '3 Months', durationDays: 90, priceINR: 1999, priceUSD: 24, storageGB: 4, maxSlots: 1, features: ['24/7 Non-stop continuous loop streaming', '4GB Cloud video storage per slot', 'Zero computer or phone usage required', 'YouTube, Facebook, Twitch & Custom RTMP', 'Ultra-fast dedicated streaming server', 'Priority WhatsApp & ticket support'], isActive: true, isPopular: true, displayOrder: 4 },
+      ];
+
+  const currentPlan = (selectedPlanId && activePlans.find((p) => p.id === selectedPlanId)) ||
+                      activePlans.find((p) => p.period === '3 Months') ||
+                      activePlans[0];
+  const unitPrice = currency === 'INR' ? currentPlan.priceINR : currentPlan.priceUSD;
   const currentCount = activeTab === 'Renew Slots' ? renewCount : addCount;
   const totalPrice = unitPrice * currentCount;
 
@@ -58,10 +71,10 @@ export const BillingView: React.FC<BillingViewProps> = ({
     setSubmittedUtr(utr);
     setIsPaymentModalOpen(false);
     if (activeTab === 'Renew Slots') {
-      onRenewSlot(currentSlot.id, selectedPeriod, renewCount);
-    } else {
-      onAddSlotsPurchased(selectedPeriod, addCount);
+      onRenewSlot(currentSlot.id, currentPlan.period, renewCount, utr);
     }
+    // In 'Add Slots', do NOT add premature slots prior to admin payment confirmation.
+    // Backend will provision the usable slot automatically upon admin verification.
     setOrderPlaced(true);
   };
 
@@ -96,26 +109,29 @@ export const BillingView: React.FC<BillingViewProps> = ({
               </p>
             </div>
 
-            {/* Segmented Duration Tabs: 3 Months, Months, Weeks, Days */}
-            <div className="flex items-center p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
-              {(['3 Months', 'Months', 'Weeks', 'Days'] as BillingPeriod[]).map((period) => (
-                <button
-                  key={period}
-                  onClick={() => setSelectedPeriod(period)}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                    selectedPeriod === period
-                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                  }`}
-                >
-                  {period}
-                </button>
-              ))}
+            {/* Segmented Duration Tabs from dynamic active plans */}
+            <div className="flex items-center p-1 bg-slate-100 dark:bg-slate-800 rounded-xl overflow-x-auto max-w-full">
+              {activePlans.map((plan) => {
+                const isSelected = currentPlan.id === plan.id;
+                return (
+                  <button
+                    key={plan.id}
+                    onClick={() => setSelectedPlanId(plan.id)}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+                      isSelected
+                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {plan.durationLabel || plan.period}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
           <div className="text-right text-xs font-medium text-slate-400 dark:text-slate-500 -mt-3">
-            *{planInfo.storage} video storage / slot
+            *{currentPlan.storageGB || 10}GB video storage / slot
           </div>
 
           {/* Sub-tabs: Add Slots | Renew Slots */}
@@ -162,7 +178,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
               {/* Counter matching screenshot 3: '3 Months count :' [-] 1 [+] [x] */}
               <div className="flex items-center gap-3">
                 <span className="text-xs font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap">
-                  {selectedPeriod} count :
+                  {currentPlan.durationLabel || currentPlan.period} count :
                 </span>
                 <div className="flex items-center border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden bg-slate-50 dark:bg-slate-800">
                   <button
@@ -201,7 +217,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
                   New Live Slot Subscription
                 </span>
                 <span className="text-xs text-slate-400 dark:text-slate-500">
-                  Includes 24/7 dedicated broadcast server + 4GB storage
+                  Includes 24/7 dedicated broadcast server + {currentPlan.storageGB || 10}GB storage
                 </span>
               </div>
 
@@ -235,10 +251,13 @@ export const BillingView: React.FC<BillingViewProps> = ({
           {/* Included Features list */}
           <div className="p-4 rounded-xl bg-purple-50/50 dark:bg-purple-950/20 border border-purple-100 dark:border-purple-900/40">
             <h5 className="text-xs font-bold text-[#6320ee] dark:text-[#a855f7] mb-2 uppercase tracking-wide">
-              {planInfo.title} Features ({selectedPeriod})
+              {currentPlan.title} Features ({currentPlan.durationLabel || currentPlan.period})
             </h5>
             <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-600 dark:text-slate-300">
-              {planInfo.features.map((feat, idx) => (
+              {(currentPlan.features && currentPlan.features.length > 0
+                ? currentPlan.features
+                : ['24/7 Continuous loop streaming', `${currentPlan.storageGB || 10}GB Cloud video storage`, '1080p 60fps broadcast quality']
+              ).map((feat, idx) => (
                 <li key={idx} className="flex items-center gap-2">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
                   <span>{feat}</span>
@@ -276,6 +295,18 @@ export const BillingView: React.FC<BillingViewProps> = ({
             {/* Line items matching Screenshot 3 */}
             <div className="flex flex-col gap-3 py-2 border-y border-slate-100 dark:border-slate-800 text-sm">
               <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                <span>Selected Plan</span>
+                <span className="font-semibold text-slate-900 dark:text-white text-right">
+                  {currentPlan.title} ({currentPlan.durationLabel || currentPlan.period})
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                <span>Rate</span>
+                <span className="font-mono text-slate-700 dark:text-slate-300">
+                  {currency === 'INR' ? `₹${unitPrice}.00` : `$${unitPrice}.00`} / slot
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
                 <span>Slots</span>
                 <span className="font-medium text-slate-900 dark:text-white tabular-nums">
                   {currentCount} × {currency === 'INR' ? `₹${unitPrice}.00` : `$${unitPrice}.00`} {currency}
@@ -283,7 +314,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
               </div>
               <div className="flex items-center justify-between text-base font-bold text-slate-900 dark:text-white">
                 <span>Total</span>
-                <span className="tabular-nums">
+                <span className="tabular-nums text-[#6320ee] dark:text-[#a855f7]">
                   {currency === 'INR' ? `₹${totalPrice}.00` : `$${totalPrice}.00`} {currency}
                 </span>
               </div>
@@ -385,17 +416,19 @@ export const BillingView: React.FC<BillingViewProps> = ({
             </div>
 
             <h3 className="text-xl font-bold text-slate-900 dark:text-white">
-              Order Confirmed!
+              {activeTab === 'Renew Slots' ? 'Renewal Request Submitted!' : 'Payment Submitted for Verification!'}
             </h3>
 
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Thank you, {user.name}! Your {selectedPeriod} subscription has been activated successfully. Your 24/7 cloud streaming slot is ready.
+              {activeTab === 'Renew Slots'
+                ? `Thank you, ${user.name}! Your renewal payment has been submitted (UTR: ${submittedUtr}). Once verified by admin, your slot validity will be extended.`
+                : `Thank you, ${user.name}! Your payment for ${addCount} live slot (${currentPlan.durationLabel || currentPlan.period}) has been submitted (UTR: ${submittedUtr}). Once verified by admin, your usable slot will be created automatically.`}
             </p>
 
             <div className="w-full p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700 text-xs flex flex-col gap-1 text-left">
               <div className="flex justify-between">
                 <span className="text-slate-500">Plan:</span>
-                <span className="font-semibold text-slate-900 dark:text-white">{selectedPeriod} Slot</span>
+                <span className="font-semibold text-slate-900 dark:text-white">{currentPlan.title} ({currentPlan.durationLabel || currentPlan.period})</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Amount Paid:</span>
@@ -429,8 +462,8 @@ export const BillingView: React.FC<BillingViewProps> = ({
       <PaymentModal
         isOpen={isPaymentModalOpen}
         onClose={() => setIsPaymentModalOpen(false)}
-        planTitle={`${selectedPeriod} Slot (${currentCount} slot)`}
-        planId={selectedPeriod}
+        planTitle={`${currentPlan.title} (${currentPlan.durationLabel || currentPlan.period})${currentCount > 1 ? ` - ${currentCount} slots` : ''}`}
+        planId={currentPlan.id || currentPlan.period}
         slotId={activeTab === 'Renew Slots' ? currentSlot.id : undefined}
         amount={totalPrice}
         currency={currency}

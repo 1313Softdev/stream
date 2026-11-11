@@ -31,6 +31,13 @@ import {
   Radio,
   BarChart3,
   TrendingUp,
+  Video,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  Maximize,
+  Youtube,
 } from 'lucide-react';
 import {
   UserProfile,
@@ -62,12 +69,15 @@ import {
   fetchGDriveFiles,
   importGDriveVideo,
   testGDriveConnection,
+  getYouTubeVideoId,
 } from '../lib/api';
 
 type AdminTab =
   | 'overview'
+  | 'live-slots'
   | 'users'
   | 'seo'
+  | 'home-video'
   | 'plans'
   | 'gateways'
   | 'utr-desk'
@@ -79,7 +89,9 @@ interface AdminDashboardViewProps {
   slots: Slot[];
   videos: VideoItem[];
   onNavigateToSlots?: () => void;
+  onSelectSlot?: (slotOrId: Slot | string) => void;
   onApproveSlot?: (slotId: string, planId?: string) => void;
+  onPlansChange?: (plans: SubscriptionPlanItem[]) => void;
 }
 
 export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
@@ -87,7 +99,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   slots,
   videos,
   onNavigateToSlots,
+  onSelectSlot,
   onApproveSlot,
+  onPlansChange,
 }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [isLoading, setIsLoading] = useState(false);
@@ -118,7 +132,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     google_drive_folder_id: '',
     google_drive_api_key: '',
     default_payment_gateway: 'upi',
+    home_live_video_url: 'https://www.youtube.com/watch?v=7PIji8OubXU',
+    home_live_video_title: 'How To Setup Youtube 24x7 Livestream',
+    home_live_video_subtitle: 'Stream LIVE',
+    home_live_video_badge: 'LIVE 1.5K VIEWERS',
+    home_live_video_poster: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=1200&auto=format&fit=crop&q=80',
   });
+  const [previewPlaying, setPreviewPlaying] = useState(false);
 
   // 3. Plans State
   const [plans, setPlans] = useState<SubscriptionPlanItem[]>([]);
@@ -185,6 +205,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       setUsers(u);
       setSettings((prev) => ({ ...prev, ...s }));
       setPlans(p);
+      if (Array.isArray(p) && p.length > 0) {
+        onPlansChange?.(p);
+      }
       setGateways(gw);
       if (gw.length > 0 && !gatewayForm.id) {
         const upiGw = gw.find((g) => g.id === 'upi') || gw[0];
@@ -212,9 +235,10 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     e.preventDefault();
     try {
       await saveAdminSettings(settings);
-      showToast('Settings & Meta tags saved successfully!');
+      showToast('Settings saved successfully!');
       // Update DOM head dynamically
       if (settings.site_title) document.title = settings.site_title;
+      window.dispatchEvent(new CustomEvent('streamadda_settings_updated'));
     } catch (err: any) {
       alert(err.message);
     }
@@ -273,12 +297,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     try {
       if (editingPlan) {
         const updated = await updateAdminPlan(editingPlan.id, planForm);
-        setPlans(plans.map((p) => (p.id === updated.id ? updated : p)));
+        const updatedPlans = plans.map((p) => (p.id === updated.id ? updated : p));
+        setPlans(updatedPlans);
+        onPlansChange?.(updatedPlans);
+        window.dispatchEvent(new Event('streamadda_plans_updated'));
         setEditingPlan(null);
         showToast(`Plan ${updated.title} updated!`);
       } else {
         const created = await createAdminPlan(planForm);
-        setPlans([...plans, created]);
+        const updatedPlans = [...plans, created];
+        setPlans(updatedPlans);
+        onPlansChange?.(updatedPlans);
+        window.dispatchEvent(new Event('streamadda_plans_updated'));
         setIsAddPlanOpen(false);
         showToast(`Plan ${created.title} created!`);
       }
@@ -291,7 +321,10 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     if (confirm(`Delete subscription plan "${title}"?`)) {
       try {
         await deleteAdminPlan(id);
-        setPlans(plans.filter((p) => p.id !== id));
+        const updatedPlans = plans.filter((p) => p.id !== id);
+        setPlans(updatedPlans);
+        onPlansChange?.(updatedPlans);
+        window.dispatchEvent(new Event('streamadda_plans_updated'));
         showToast(`Plan "${title}" deleted.`);
       } catch (err: any) {
         alert(err.message);
@@ -442,7 +475,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-slate-200 dark:border-slate-800 scrollbar-none">
         {[
           { id: 'overview' as AdminTab, label: 'Overview', icon: BarChart3 },
+          { id: 'live-slots' as AdminTab, label: `Live Slots (${slots.length})`, icon: Radio },
           { id: 'users' as AdminTab, label: `Users (${users.length})`, icon: Users },
+          { id: 'home-video' as AdminTab, label: 'Home Live Video', icon: Video },
           { id: 'seo' as AdminTab, label: 'Meta Tags & SEO', icon: Tag },
           { id: 'plans' as AdminTab, label: 'Subscription Plans', icon: Layers },
           { id: 'gateways' as AdminTab, label: 'Payment Gateways', icon: CreditCard },
@@ -495,7 +530,11 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               </div>
             </div>
 
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between">
+            <div 
+              onClick={() => setActiveTab('live-slots')}
+              className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between cursor-pointer hover:border-[#6320ee] transition-all"
+              title="Click to view all Live Slots in Admin"
+            >
               <div className="flex flex-col">
                 <span className="text-xs font-medium text-slate-500">Active Live Streams</span>
                 <span className="text-2xl font-extrabold text-slate-900 dark:text-white mt-1">{activeStreamsCount}</span>
@@ -532,7 +571,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           {/* Quick Actions Shortcuts */}
           <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col gap-4">
             <h3 className="text-base font-bold text-slate-900 dark:text-white">Admin Quick Operations</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               <button
                 onClick={() => { setActiveTab('users'); setIsAddUserOpen(true); }}
                 className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-800 text-left flex flex-col gap-1 transition-all cursor-pointer"
@@ -540,6 +579,15 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 <Users className="w-5 h-5 text-[#6320ee]" />
                 <span className="text-xs font-bold text-slate-900 dark:text-white mt-1">Add New User</span>
                 <span className="text-[11px] text-slate-400">Custom space & password</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('live-slots')}
+                className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-800 text-left flex flex-col gap-1 transition-all cursor-pointer"
+              >
+                <Radio className="w-5 h-5 text-[#6320ee]" />
+                <span className="text-xs font-bold text-slate-900 dark:text-white mt-1">Live Slots</span>
+                <span className="text-[11px] text-slate-400">{slots.length} slots ({activeStreamsCount} live)</span>
               </button>
 
               <button
@@ -568,6 +616,162 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 <span className="text-xs font-bold text-slate-900 dark:text-white mt-1">Google Drive Movies</span>
                 <span className="text-[11px] text-slate-400">{gdriveStatus.enabled ? 'Enabled' : 'Disabled'}</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: LIVE BROADCAST SLOTS */}
+      {activeTab === 'live-slots' && (
+        <div className="flex flex-col gap-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <span>Live Broadcast Slots</span>
+                <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                  {slots.length} Total ({activeStreamsCount} Live)
+                </span>
+              </h3>
+              <p className="text-xs text-slate-500">
+                Monitor and control all streaming slots across the entire platform.
+              </p>
+            </div>
+            {onNavigateToSlots && (
+              <button
+                onClick={onNavigateToSlots}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-[#6320ee] hover:bg-[#5218cc] shadow-md transition-all flex items-center gap-2 cursor-pointer"
+              >
+                <Radio className="w-4 h-4" />
+                <span>Open Full Live Slots Studio &rarr;</span>
+              </button>
+            )}
+          </div>
+
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-slate-500 font-semibold uppercase tracking-wider">
+                  <tr>
+                    <th className="py-3 px-4">Slot Name & ID</th>
+                    <th className="py-3 px-4">Creator / Owner</th>
+                    <th className="py-3 px-4">Destination</th>
+                    <th className="py-3 px-4">Stream Status</th>
+                    <th className="py-3 px-4">Approval</th>
+                    <th className="py-3 px-4">Expires On</th>
+                    <th className="py-3 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                  {slots.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-12 text-center text-slate-400">
+                        No live slots found. Click "Open Full Live Slots Studio" to add or configure slots.
+                      </td>
+                    </tr>
+                  ) : (
+                    slots.map((s) => (
+                      <tr
+                        key={s.id}
+                        onClick={() => onSelectSlot ? onSelectSlot(s) : onNavigateToSlots?.()}
+                        className="hover:bg-purple-50/40 dark:hover:bg-slate-800/60 transition-colors cursor-pointer group"
+                        title="Click anywhere on row to open in Live Slot Studio"
+                      >
+                        <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectSlot ? onSelectSlot(s) : onNavigateToSlots?.();
+                            }}
+                            className="font-bold text-slate-900 dark:text-white group-hover:text-[#6320ee] dark:group-hover:text-[#a855f7] transition-colors text-left flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <span>{s.name}</span>
+                          </button>
+                          <div className="text-[10px] text-slate-400 font-mono font-normal">ID: {s.id}</div>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            s.userId === currentUser.id
+                              ? 'bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                          }`}>
+                            {s.userId === currentUser.id ? '★ Admin (You)' : (s.userId ? `User: ${s.userId.slice(-6)}` : 'Platform')}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <div className="font-semibold text-slate-700 dark:text-slate-300">{s.platform || 'YouTube'}</div>
+                          <div className="text-[10px] text-slate-400 font-mono">
+                            {s.streamKey ? `${s.streamKey.slice(0, 4)}••••` : 'No key'}
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                            s.streamStatus === 'Live'
+                              ? 'bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400 border border-red-200 dark:border-red-800 animate-pulse'
+                              : s.streamStatus === 'Scheduled'
+                              ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400 border border-blue-200 dark:border-blue-800'
+                              : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                          }`}>
+                            ● {s.streamStatus}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          {s.status === 'expired' ? (
+                            <div className="flex flex-col gap-0.5 items-start">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/50 dark:text-red-400 dark:border-red-800">
+                                expired
+                              </span>
+                              {s.expiresAt ? (
+                                <span className="text-[9px] text-amber-600 dark:text-amber-400 font-mono">
+                                  Purge in {Math.max(1, 15 - Math.floor((Date.now() - s.expiresAt) / (24 * 3600 * 1000)))}d
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                              s.status === 'active'
+                                ? 'bg-emerald-50 text-emerald-600 border border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-800'
+                                : s.status === 'pending_approval'
+                                ? 'bg-amber-50 text-amber-600 border border-amber-200 dark:bg-amber-950/50 dark:text-amber-400 dark:border-amber-800'
+                                : 'bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/50 dark:text-red-400 dark:border-red-800'
+                            }`}>
+                              {s.status}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-500 font-mono text-[11px]">
+                          {s.status === 'expired' ? (
+                            <div>
+                              <div className="line-through text-red-400/80">{s.expireOn || 'Expired'}</div>
+                              {s.expiresAt && (
+                                <div className="text-[10px] text-slate-400 font-sans">
+                                  Auto-delete in {Math.max(1, 15 - Math.floor((Date.now() - s.expiresAt) / (24 * 3600 * 1000)))}d
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            s.expireOn || 'Never'
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 text-right">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectSlot ? onSelectSlot(s) : onNavigateToSlots?.();
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-purple-50 dark:bg-purple-950/60 hover:bg-[#6320ee] hover:text-white text-xs font-bold text-[#6320ee] dark:text-[#a855f7] transition-all flex items-center gap-1.5 ml-auto cursor-pointer shadow-2xs"
+                            title="Open slot in Live Studio"
+                          >
+                            <Radio className="w-3.5 h-3.5" />
+                            <span>Open Studio &rarr;</span>
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -1005,6 +1209,262 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         </form>
       )}
 
+      {/* TAB: HOMEPAGE "HOW TO LIVE" VIDEO CUSTOMIZATION */}
+      {activeTab === 'home-video' && (
+        <form onSubmit={handleSaveSettings} className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          <div className="lg:col-span-6 bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col gap-5">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Video className="w-5 h-5 text-[#6320ee]" />
+                  <span>Homepage "How To Live" Video</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Customize the live demo video player displayed on the public landing page as shown in the design.
+                </p>
+              </div>
+            </div>
+
+            {/* Video Link */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                <span>Live Video / YouTube Stream URL *</span>
+                {(() => {
+                  const yt = getYouTubeVideoId(settings.home_live_video_url);
+                  if (yt) {
+                    return (
+                      <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        ✓ YouTube ID: {yt}
+                      </span>
+                    );
+                  }
+                  if (settings.home_live_video_url?.trim()) {
+                    return (
+                      <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/50 px-2 py-0.5 rounded-full">
+                        Direct Video Link
+                      </span>
+                    );
+                  }
+                  return null;
+                })()}
+              </label>
+              <input
+                type="url"
+                value={settings.home_live_video_url || ''}
+                onChange={(e) => setSettings({ ...settings, home_live_video_url: e.target.value })}
+                className="w-full px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl"
+                placeholder="https://www.youtube.com/watch?v=... or https://youtu.be/..."
+              />
+              <span className="text-[11px] text-slate-400">
+                Paste any YouTube live video, standard YouTube URL, or direct MP4/WebM video stream link.
+              </span>
+            </div>
+
+            {/* Video Title */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Video Title
+              </label>
+              <input
+                type="text"
+                value={settings.home_live_video_title || ''}
+                onChange={(e) => setSettings({ ...settings, home_live_video_title: e.target.value })}
+                className="w-full px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl"
+                placeholder="How To Setup Youtube 24x7 Livestream"
+              />
+            </div>
+
+            {/* Subtitle / Channel & Live Badge */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Channel Name / Subtitle
+                </label>
+                <input
+                  type="text"
+                  value={settings.home_live_video_subtitle || ''}
+                  onChange={(e) => setSettings({ ...settings, home_live_video_subtitle: e.target.value })}
+                  className="w-full px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl"
+                  placeholder="Stream LIVE"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Live Viewers Badge
+                </label>
+                <input
+                  type="text"
+                  value={settings.home_live_video_badge || ''}
+                  onChange={(e) => setSettings({ ...settings, home_live_video_badge: e.target.value })}
+                  className="w-full px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl"
+                  placeholder="LIVE 1.5K VIEWERS"
+                />
+              </div>
+            </div>
+
+            {/* Custom Poster */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Custom Thumbnail / Poster URL (Optional)
+              </label>
+              <input
+                type="url"
+                value={settings.home_live_video_poster || ''}
+                onChange={(e) => setSettings({ ...settings, home_live_video_poster: e.target.value })}
+                className="w-full px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl"
+                placeholder="https://images.unsplash.com/..."
+              />
+              <span className="text-[11px] text-slate-400">
+                Leave blank to automatically load the YouTube HD video thumbnail.
+              </span>
+            </div>
+
+            <button
+              type="submit"
+              className="py-3 rounded-xl text-xs font-bold text-white bg-[#6320ee] hover:bg-[#5218cc] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md mt-2"
+            >
+              <Save className="w-4 h-4" />
+              <span>Save & Publish to Homepage</span>
+            </button>
+          </div>
+
+          {/* Right Column: Live Mockup Preview Matching User's Pic */}
+          <div className="lg:col-span-6 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                Homepage Live Preview (Real-Time Interactive)
+              </span>
+              <span className="text-[11px] text-purple-600 dark:text-purple-400 font-medium">
+                Matches Landing Page
+              </span>
+            </div>
+
+            <div className="bg-slate-950 rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl border border-black/40 relative aspect-video flex items-center justify-center">
+              {/* YouTube Video Header Overlay */}
+              <div className="p-3 bg-gradient-to-b from-black/85 via-black/40 to-transparent absolute top-0 left-0 right-0 z-20 flex items-center justify-between text-white pointer-events-auto">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-red-600 flex flex-col items-center justify-center text-white shrink-0 shadow-sm border border-white/20">
+                    <Play className="w-3 h-3 fill-current ml-0.5" />
+                    <span className="text-[6px] font-black leading-none mt-0.5">LIVE</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs font-bold leading-tight truncate max-w-[180px] sm:max-w-xs">
+                      {settings.home_live_video_title || 'How To Setup Youtube 24x7 Livestream'}
+                    </span>
+                    <span className="text-[10px] text-slate-300">
+                      {settings.home_live_video_subtitle || 'Stream LIVE'}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <span className="bg-red-600 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
+                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                    <span>{settings.home_live_video_badge || 'LIVE 1.5K VIEWERS'}</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Video Content */}
+              {(() => {
+                const ytId = getYouTubeVideoId(settings.home_live_video_url);
+                const poster = settings.home_live_video_poster || '/assets/home-live-mockup.jpg';
+
+                if (previewPlaying && ytId) {
+                  return (
+                    <div className="relative w-full h-full bg-black">
+                      <iframe
+                        src={`https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&mute=1&playsinline=1&rel=0&controls=1`}
+                        title="Live Preview"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                        className="w-full h-full object-cover border-0"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setPreviewPlaying(false)}
+                        className="absolute top-2 left-2 z-30 px-2.5 py-1 bg-black/80 hover:bg-black text-white text-[11px] font-semibold rounded-md border border-white/20 shadow-sm"
+                      >
+                        Exit Preview
+                      </button>
+                    </div>
+                  );
+                }
+
+                return (
+                  <>
+                    <img
+                      src={poster}
+                      alt="Preview Thumbnail"
+                      className="w-full h-full object-cover select-none"
+                      onError={(e) => {
+                        if (!e.currentTarget.src.includes('home-live-mockup.jpg')) {
+                          e.currentTarget.src = '/assets/home-live-mockup.jpg';
+                        }
+                      }}
+                    />
+
+                    {/* Glowing Cyan/Blue Ring Center Button matching picture */}
+                    <button
+                      type="button"
+                      onClick={() => setPreviewPlaying(!previewPlaying)}
+                      className="absolute z-20 w-16 h-16 rounded-full bg-black/65 backdrop-blur-xs text-white border-[3px] border-[#38bdf8] ring-4 ring-[#38bdf8]/35 shadow-[0_0_30px_rgba(56,189,248,0.9)] flex items-center justify-center hover:scale-105 active:scale-95 transition-all cursor-pointer group"
+                      title="Play Preview"
+                    >
+                      <div className="flex items-center gap-1.5 group-hover:scale-105 transition-transform">
+                        <span className="w-2 h-7 bg-white rounded-xs shadow-xs" />
+                        <span className="w-2 h-7 bg-white rounded-xs shadow-xs" />
+                      </div>
+                    </button>
+
+                    {/* YouTube Bottom Controls Bar Overlaid on Video */}
+                    <div className="absolute bottom-0 left-0 right-0 z-20 px-4 py-2.5 bg-gradient-to-t from-black/95 via-black/65 to-transparent flex items-center justify-between text-white select-none">
+                      <div className="flex items-center gap-2.5">
+                        <button
+                          type="button"
+                          onClick={() => setPreviewPlaying(!previewPlaying)}
+                          className="hover:opacity-80 cursor-pointer"
+                        >
+                          <div className="flex items-center gap-1">
+                            <span className="w-1.5 h-3.5 bg-white rounded-2xs" />
+                            <span className="w-1.5 h-3.5 bg-white rounded-2xs" />
+                          </div>
+                        </button>
+                        <span className="font-sans text-xs text-slate-200">
+                          0:01 / 1:39
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <a
+                          href={settings.home_live_video_url || 'https://www.youtube.com'}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-center gap-1.5 hover:opacity-80 cursor-pointer group"
+                          title="Open configured live stream in new tab"
+                        >
+                          <div className="w-5 h-3.5 bg-red-600 rounded flex items-center justify-center">
+                            <Play className="w-2 h-2 fill-white text-white ml-0.5" />
+                          </div>
+                          <span className="text-[11px] text-white font-bold tracking-tight">YouTube</span>
+                        </a>
+                        <Maximize className="w-3.5 h-3.5 text-slate-400 hover:text-white cursor-pointer" />
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-purple-50 dark:bg-purple-950/30 border border-purple-100 dark:border-purple-900/50 text-xs text-purple-700 dark:text-purple-300 flex flex-col gap-1">
+              <span className="font-semibold">💡 Customization Tips:</span>
+              <span>• Paste any YouTube Video ID or full link — the player auto-configures the embed.</span>
+              <span>• Changes saved here immediately update the player on the public home page.</span>
+            </div>
+          </div>
+        </form>
+      )}
+
       {/* TAB 4: SUBSCRIPTION PLANS MANAGEMENT */}
       {activeTab === 'plans' && (
         <div className="flex flex-col gap-6">
@@ -1096,7 +1556,15 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   <button
                     onClick={() => {
                       setEditingPlan(plan);
-                      setPlanForm(plan);
+                      const defaultDays = plan.period === 'Days' ? 1 : plan.period === 'Weeks' ? 7 : plan.period === 'Months' ? 30 : plan.period === '3 Months' ? 90 : 365;
+                      const defaultLabel = plan.period === 'Days' ? '1 Day' : plan.period === 'Weeks' ? '1 Week' : plan.period === 'Months' ? '1 Month' : plan.period === '3 Months' ? '3 Months' : '1 Year';
+                      setPlanForm({
+                        ...plan,
+                        durationDays: plan.durationDays || defaultDays,
+                        durationLabel: (plan.period === 'Days' && (plan.durationLabel || '').toLowerCase().includes('month'))
+                          ? '1 Day'
+                          : (plan.durationLabel || defaultLabel),
+                      });
                       setIsAddPlanOpen(true);
                     }}
                     className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1.5 cursor-pointer"
@@ -1141,12 +1609,22 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-3 gap-3">
                     <div>
                       <label className="font-semibold block mb-1">Period Type</label>
                       <select
                         value={planForm.period || 'Months'}
-                        onChange={(e) => setPlanForm({ ...planForm, period: e.target.value as any })}
+                        onChange={(e) => {
+                          const p = e.target.value as any;
+                          const defaultDays = p === 'Days' ? 1 : p === 'Weeks' ? 7 : p === 'Months' ? 30 : p === '3 Months' ? 90 : 365;
+                          const defaultLabel = p === 'Days' ? '1 Day' : p === 'Weeks' ? '1 Week' : p === 'Months' ? '1 Month' : p === '3 Months' ? '3 Months' : '1 Year';
+                          setPlanForm({
+                            ...planForm,
+                            period: p,
+                            durationDays: defaultDays,
+                            durationLabel: defaultLabel,
+                          });
+                        }}
                         className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border rounded-lg"
                       >
                         <option value="Days">Days</option>
@@ -1155,6 +1633,17 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                         <option value="3 Months">3 Months</option>
                         <option value="Year">Year</option>
                       </select>
+                    </div>
+                    <div>
+                      <label className="font-semibold block mb-1">Duration Label</label>
+                      <input
+                        type="text"
+                        value={planForm.durationLabel || ''}
+                        onChange={(e) => setPlanForm({ ...planForm, durationLabel: e.target.value })}
+                        placeholder="e.g. 1 Month, 30 Days"
+                        className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border rounded-lg"
+                        required
+                      />
                     </div>
                     <div>
                       <label className="font-semibold block mb-1">Duration Days</label>
@@ -1526,9 +2015,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                                 </span>
                               )}
                               {tx.slotId && (
-                                <span className="text-[10px] text-[#6320ee] dark:text-[#a855f7] font-mono mt-0.5 bg-purple-50 dark:bg-purple-950/40 px-1.5 py-0.5 rounded w-fit border border-purple-200 dark:border-purple-800/40">
-                                  Slot: {tx.slotId}
-                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onSelectSlot ? onSelectSlot(tx.slotId!) : onNavigateToSlots?.();
+                                  }}
+                                  className="text-[10px] text-[#6320ee] dark:text-[#a855f7] font-mono mt-0.5 bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/60 px-2 py-0.5 rounded w-fit border border-purple-200 dark:border-purple-800/40 transition-colors flex items-center gap-1 cursor-pointer"
+                                  title="Open this slot in Live Slot Studio"
+                                >
+                                  <Radio className="w-2.5 h-2.5" />
+                                  <span>Slot: {tx.slotId} &rarr;</span>
+                                </button>
                               )}
                             </div>
                           </td>

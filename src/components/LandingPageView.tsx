@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   UserPlus,
   Upload,
@@ -24,7 +24,8 @@ import {
 } from 'lucide-react';
 import { PantherLogo } from './PantherLogo';
 import { BILLING_PLANS } from '../config/billingPlans';
-import { UserProfile, BillingPeriod } from '../types';
+import { UserProfile, BillingPeriod, SubscriptionPlanItem, SiteMetaSettings } from '../types';
+import { getYouTubeVideoId, fetchPublicSettings } from '../lib/api';
 
 interface LandingPageViewProps {
   onGoToDashboard: () => void;
@@ -34,6 +35,7 @@ interface LandingPageViewProps {
   isAuthenticated?: boolean;
   user?: UserProfile;
   onLogout?: () => void;
+  plans?: SubscriptionPlanItem[];
 }
 
 export const LandingPageView: React.FC<LandingPageViewProps> = ({
@@ -44,13 +46,46 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
   isAuthenticated,
   user,
   onLogout,
+  plans,
 }) => {
   const [currency, setCurrency] = useState<'INR' | 'USD'>('INR');
   const [isPlayingDemo, setIsPlayingDemo] = useState(false);
   const [isMutedDemo, setIsMutedDemo] = useState(true);
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(0);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [settings, setSettings] = useState<SiteMetaSettings | null>(null);
+  const [videoDuration, setVideoDuration] = useState<number>(99);
+  const [videoCurrentTime, setVideoCurrentTime] = useState<number>(1);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const playerContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetchPublicSettings()
+      .then((s) => {
+        if (s) setSettings(s);
+      })
+      .catch(console.error);
+
+    const handleUpdate = () => {
+      fetchPublicSettings()
+        .then((s) => {
+          if (s) setSettings(s);
+        })
+        .catch(console.error);
+    };
+
+    window.addEventListener('streamadda_settings_updated', handleUpdate);
+    return () => {
+      window.removeEventListener('streamadda_settings_updated', handleUpdate);
+    };
+  }, []);
+
+  const videoUrl = settings?.home_live_video_url || 'https://www.youtube.com/watch?v=7PIji8OubXU';
+  const videoTitle = settings?.home_live_video_title || 'How To Setup Youtube 24x7 Livestream';
+  const videoSubtitle = settings?.home_live_video_subtitle || 'Stream LIVE';
+  const liveBadgeText = settings?.home_live_video_badge || 'LIVE 1.5K VIEWERS';
+  const youtubeId = getYouTubeVideoId(videoUrl);
+  const posterUrl = settings?.home_live_video_poster || '/assets/home-live-mockup.jpg';
 
   const handleScrollTo = (e: React.MouseEvent, id: string) => {
     e.preventDefault();
@@ -72,22 +107,53 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
   };
 
   const togglePlay = () => {
+    if (youtubeId) {
+      setIsPlayingDemo(!isPlayingDemo);
+      return;
+    }
     if (videoRef.current) {
       if (isPlayingDemo) {
         videoRef.current.pause();
         setIsPlayingDemo(false);
       } else {
-        videoRef.current.play();
+        videoRef.current.play().catch(console.error);
         setIsPlayingDemo(true);
       }
+    } else {
+      setIsPlayingDemo(!isPlayingDemo);
     }
   };
 
   const toggleMute = () => {
+    setIsMutedDemo(!isMutedDemo);
     if (videoRef.current) {
       videoRef.current.muted = !isMutedDemo;
-      setIsMutedDemo(!isMutedDemo);
     }
+  };
+
+  const handleOpenYouTube = () => {
+    if (youtubeId) {
+      window.open(`https://www.youtube.com/watch?v=${youtubeId}`, '_blank');
+    } else if (videoUrl && videoUrl.trim()) {
+      window.open(videoUrl, '_blank');
+    } else {
+      window.open('https://www.youtube.com', '_blank');
+    }
+  };
+
+  const handleToggleFullscreen = () => {
+    if (!playerContainerRef.current) return;
+    if (!document.fullscreenElement) {
+      playerContainerRef.current.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
   const faqs = [
@@ -320,7 +386,7 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
           {/* Left Column matching screenshot 7 */}
           <div className="lg:col-span-7 flex flex-col items-start gap-6">
             <h1 className="text-5xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight leading-none text-white text-balance">
-              Stream Live
+              Stream <span className="text-red-500">LIVE</span>
             </h1>
 
             <p className="text-xl sm:text-2xl font-medium text-purple-100 max-w-xl leading-snug">
@@ -453,74 +519,182 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
               </div>
             </div>
 
-            {/* Right Video Player Mockup matching Screenshot 8 */}
+            {/* Right Video Player Mockup matching Screenshot */}
             <div className="lg:col-span-7">
-              <div className="bg-slate-950 rounded-2xl overflow-hidden shadow-2xl border border-purple-400/30 relative">
-                {/* YouTube Video Header */}
-                <div className="p-3 bg-gradient-to-b from-black/80 to-transparent absolute top-0 left-0 right-0 z-10 flex items-center justify-between text-white">
-                  <div className="flex items-center gap-2.5">
-                    <PantherLogo size={24} showText={false} />
-                    <div className="flex flex-col">
-                      <span className="text-xs font-bold leading-tight truncate">
-                        How To Setup Youtube 24x7 Livestream
-                      </span>
-                      <span className="text-[10px] text-slate-300">Stream LIVE</span>
+              <div
+                ref={playerContainerRef}
+                className="bg-slate-950 rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl border border-black/40 relative group aspect-video flex items-center justify-center"
+              >
+                {isPlayingDemo && youtubeId ? (
+                  <div className="relative w-full h-full bg-black">
+                    <iframe
+                      src={`https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=1&mute=${isMutedDemo ? 1 : 0}&playsinline=1&rel=0&controls=1`}
+                      title={videoTitle}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                      allowFullScreen
+                      className="w-full h-full object-cover border-0"
+                    />
+                    {/* Floating bar to close / exit player back to mockup */}
+                    <div className="absolute top-3 left-3 z-30 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsPlayingDemo(false)}
+                        className="px-3 py-1.5 bg-black/80 hover:bg-black text-white text-xs font-semibold rounded-lg backdrop-blur-xs border border-white/20 shadow-lg flex items-center gap-1.5 transition-all cursor-pointer"
+                        title="Exit player back to preview"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        <span>Exit Player</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleOpenYouTube}
+                        className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg shadow-lg flex items-center gap-1.5 transition-all cursor-pointer"
+                        title="Watch on YouTube"
+                      >
+                        <Youtube className="w-3.5 h-3.5" />
+                        <span>Watch on YouTube</span>
+                      </button>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span className="bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
-                      ● LIVE 1.5K VIEWERS
-                    </span>
-                    <button onClick={toggleMute} className="text-white hover:text-purple-300">
-                      {isMutedDemo ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Video Container */}
-                <div className="relative aspect-video bg-black flex items-center justify-center">
-                  <video
-                    ref={videoRef}
-                    src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-                    loop
-                    muted={isMutedDemo}
-                    playsInline
-                    className="w-full h-full object-cover"
-                    poster="https://images.unsplash.com/photo-1542751371-adc38448a05e?w=1200&auto=format&fit=crop&q=80"
-                  />
-
-                  {/* Play/Pause Center Button */}
-                  <button
-                    onClick={togglePlay}
-                    className="absolute z-20 w-16 h-16 rounded-full bg-black/60 backdrop-blur-xs text-white border border-white/20 flex items-center justify-center hover:scale-110 transition-transform cursor-pointer shadow-xl"
-                  >
-                    {isPlayingDemo ? (
-                      <Pause className="w-7 h-7 fill-current" />
-                    ) : (
-                      <Play className="w-7 h-7 fill-current ml-1" />
-                    )}
-                  </button>
-                </div>
-
-                {/* YouTube Bottom Controls Bar */}
-                <div className="p-3 bg-slate-900/95 flex items-center justify-between text-white text-xs">
-                  <div className="flex items-center gap-3">
-                    <button onClick={togglePlay} className="hover:text-purple-400">
-                      {isPlayingDemo ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                    </button>
-                    <span className="font-mono text-[11px] text-slate-300">
-                      0:01 / 1:39
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-1 text-red-500 font-bold">
-                      <Youtube className="w-4 h-4" />
-                      <span className="text-[11px]">YouTube</span>
+                ) : isPlayingDemo && !youtubeId ? (
+                  <div className="relative w-full h-full bg-black">
+                    <video
+                      ref={videoRef}
+                      src={videoUrl}
+                      autoPlay
+                      loop
+                      muted={isMutedDemo}
+                      playsInline
+                      onTimeUpdate={(e) => {
+                        const cur = e.currentTarget.currentTime;
+                        const dur = e.currentTarget.duration || 99;
+                        setVideoCurrentTime(cur);
+                        setVideoDuration(dur);
+                      }}
+                      className="w-full h-full object-cover"
+                      poster={posterUrl}
+                    />
+                    <div className="absolute top-3 left-3 z-30">
+                      <button
+                        type="button"
+                        onClick={() => setIsPlayingDemo(false)}
+                        className="px-3 py-1.5 bg-black/80 hover:bg-black text-white text-xs font-semibold rounded-lg backdrop-blur-xs border border-white/20 shadow-lg flex items-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        <span>Exit Player</span>
+                      </button>
                     </div>
-                    <Maximize className="w-3.5 h-3.5 text-slate-400 hover:text-white" />
                   </div>
-                </div>
+                ) : (
+                  <>
+                    {/* Background Poster Image */}
+                    <img
+                      src={posterUrl}
+                      alt={videoTitle}
+                      className="w-full h-full object-cover select-none"
+                      onError={(e) => {
+                        if (!e.currentTarget.src.includes('home-live-mockup.jpg')) {
+                          e.currentTarget.src = '/assets/home-live-mockup.jpg';
+                        }
+                      }}
+                    />
+
+                    {/* TOP OVERLAY HEADER - Matching user's picture */}
+                    <div className="absolute top-0 left-0 right-0 z-20 p-3.5 sm:p-4 bg-gradient-to-b from-black/85 via-black/40 to-transparent flex items-center justify-between text-white pointer-events-auto">
+                      <div className="flex items-center gap-2.5">
+                        {/* Red Live Badge */}
+                        <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-red-600 flex flex-col items-center justify-center text-white shrink-0 shadow-md border border-white/20">
+                          <Play className="w-3 sm:w-3.5 h-3 sm:h-3.5 fill-current ml-0.5" />
+                          <span className="text-[6px] sm:text-[7px] font-black tracking-tight leading-none mt-0.5">LIVE</span>
+                        </div>
+                        <div className="flex flex-col">
+                          <span
+                            onClick={handleOpenYouTube}
+                            className="text-xs sm:text-sm font-bold leading-tight truncate max-w-[190px] sm:max-w-md cursor-pointer hover:underline"
+                            title="Open live stream on YouTube"
+                          >
+                            {videoTitle}
+                          </span>
+                          <span className="text-[10px] sm:text-xs text-slate-300 font-medium">
+                            {videoSubtitle}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2.5">
+                        {/* Red Pill: LIVE 1.5K VIEWERS */}
+                        <span className="bg-red-600 text-white text-[10px] sm:text-xs font-black px-2.5 sm:px-3 py-1 rounded-full flex items-center gap-1.5 shadow-md tracking-wider">
+                          <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-white animate-pulse" />
+                          <span>{liveBadgeText}</span>
+                        </span>
+                        {/* Mute Button */}
+                        <button
+                          type="button"
+                          onClick={toggleMute}
+                          className="p-1.5 rounded-lg text-white hover:text-purple-300 transition-colors cursor-pointer"
+                          title={isMutedDemo ? 'Unmute' : 'Mute'}
+                        >
+                          {isMutedDemo ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* CENTER BUTTON - Glowing Electric Blue/Sky Blue Ring with Pause/Play Icon */}
+                    <button
+                      type="button"
+                      onClick={togglePlay}
+                      className="absolute z-20 w-18 h-18 sm:w-22 sm:h-22 rounded-full bg-black/65 backdrop-blur-xs text-white border-[3px] border-[#38bdf8] ring-4 ring-[#38bdf8]/35 shadow-[0_0_35px_rgba(56,189,248,0.9)] flex items-center justify-center hover:scale-105 active:scale-95 transition-all cursor-pointer group"
+                      title="Play / Pause Live Stream"
+                    >
+                      <div className="flex items-center gap-1.5 group-hover:scale-105 transition-transform">
+                        <span className="w-2 sm:w-2.5 h-7 sm:h-8 bg-white rounded-xs shadow-xs" />
+                        <span className="w-2 sm:w-2.5 h-7 sm:h-8 bg-white rounded-xs shadow-xs" />
+                      </div>
+                    </button>
+
+                    {/* BOTTOM OVERLAY BAR - Matching user's picture */}
+                    <div className="absolute bottom-0 left-0 right-0 z-20 px-4 py-3 sm:px-5 sm:py-3.5 bg-gradient-to-t from-black/95 via-black/65 to-transparent flex items-center justify-between text-white select-none">
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={togglePlay}
+                          className="hover:opacity-80 cursor-pointer transition-opacity flex items-center"
+                          title="Play / Pause Live Stream"
+                        >
+                          <div className="flex items-center gap-1">
+                            <span className="w-1.5 h-4 bg-white rounded-2xs shadow-xs" />
+                            <span className="w-1.5 h-4 bg-white rounded-2xs shadow-xs" />
+                          </div>
+                        </button>
+                        <span className="font-sans text-xs sm:text-sm font-medium text-slate-200 tracking-wide">
+                          0:01 / 1:39
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-4">
+                        <button
+                          type="button"
+                          onClick={handleOpenYouTube}
+                          className="flex items-center gap-1.5 hover:opacity-90 transition-opacity cursor-pointer group"
+                          title="Open and Watch on YouTube"
+                        >
+                          <div className="w-6 h-4 bg-red-600 rounded flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
+                            <Play className="w-2 h-2 fill-white text-white ml-0.5" />
+                          </div>
+                          <span className="text-xs sm:text-sm font-bold text-white tracking-tight">YouTube</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleToggleFullscreen}
+                          className="text-slate-300 hover:text-white cursor-pointer transition-colors p-1"
+                          title="Toggle Fullscreen"
+                        >
+                          <Maximize className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -561,75 +735,88 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
             </div>
           </div>
 
-          {/* 4 Pricing Cards Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 w-full">
-            {Object.values(BILLING_PLANS).map((plan) => {
-              const isPopular = plan.period === '3 Months';
-              const price = currency === 'INR' ? `₹${plan.priceINR}` : `$${plan.priceUSD}`;
+          {/* Dynamic Pricing Cards Grid */}
+          {(() => {
+            const activePlans: SubscriptionPlanItem[] = (plans && plans.length > 0)
+              ? plans.filter((p) => p.isActive)
+              : [
+                  { id: 'plan_days', title: 'Daily Trial / Event', period: 'Days', durationLabel: '1 Day', durationDays: 1, priceINR: 99, priceUSD: 1.5, storageGB: 1, maxSlots: 1, features: ['24 Hours nonstop live streaming', '1GB Cloud video storage', 'Perfect for one-off broadcasts or webinars'], isActive: true, isPopular: false, displayOrder: 1 },
+                  { id: 'plan_weeks', title: 'Weekly Boost', period: 'Weeks', durationLabel: '1 Week', durationDays: 7, priceINR: 299, priceUSD: 4, storageGB: 2, maxSlots: 1, features: ['24/7 Continuous streaming for 7 days', '2GB Cloud video storage', 'Instant activation upon order', 'All platforms supported'], isActive: true, isPopular: false, displayOrder: 2 },
+                  { id: 'plan_months', title: 'Monthly Standard', period: 'Months', durationLabel: '1 Month', durationDays: 30, priceINR: 799, priceUSD: 10, storageGB: 4, maxSlots: 1, features: ['24/7 Non-stop continuous loop streaming', '4GB Cloud video storage per slot', 'Full 1080p 60fps broadcast quality', 'Automated schedule & loop timer', 'Standard support'], isActive: true, isPopular: false, displayOrder: 3 },
+                  { id: 'plan_3months', title: 'Quarterly Supercharged', period: '3 Months', durationLabel: '3 Months', durationDays: 90, priceINR: 1999, priceUSD: 24, storageGB: 4, maxSlots: 1, features: ['24/7 Non-stop continuous loop streaming', '4GB Cloud video storage per slot', 'Zero computer or phone usage required', 'YouTube, Facebook, Twitch & Custom RTMP', 'Ultra-fast dedicated streaming server', 'Priority WhatsApp & ticket support'], isActive: true, isPopular: true, displayOrder: 4 },
+                ];
 
-              return (
-                <div
-                  key={plan.period}
-                  className={`rounded-2xl p-6 flex flex-col justify-between border transition-all duration-200 ${
-                    isPopular
-                      ? 'border-[#6320ee] bg-purple-50/30 dark:bg-purple-950/20 shadow-lg ring-2 ring-[#6320ee]/30 relative'
-                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs hover:border-slate-300'
-                  }`}
-                >
-                  {isPopular && (
-                    <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-[#6320ee] text-white text-[10px] font-extrabold uppercase tracking-wider py-1 px-3 rounded-full shadow-xs">
-                      Best Value · Save 30%
-                    </span>
-                  )}
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 w-full">
+                {activePlans.map((plan) => {
+                  const isPopular = plan.isPopular || plan.period === '3 Months';
+                  const price = currency === 'INR' ? `₹${plan.priceINR}` : `$${plan.priceUSD}`;
 
-                  <div className="flex flex-col gap-4">
-                    <div>
-                      <h4 className="text-base font-bold text-slate-900 dark:text-white">
-                        {plan.title}
-                      </h4>
-                      <span className="text-xs text-slate-400 font-medium">
-                        {plan.durationLabel} Access
-                      </span>
-                    </div>
-
-                    <div className="flex items-baseline gap-1">
-                      <span className="text-3xl font-extrabold text-slate-900 dark:text-white tabular-nums">
-                        {price}
-                      </span>
-                      <span className="text-xs text-slate-400">/{plan.durationLabel}</span>
-                    </div>
-
-                    <div className="text-xs font-semibold text-[#6320ee] dark:text-[#a855f7] bg-purple-50 dark:bg-purple-950/40 p-2 rounded-lg">
-                      *{plan.storage} Cloud Video Storage
-                    </div>
-
-                    <ul className="flex flex-col gap-2 pt-2 text-xs text-slate-600 dark:text-slate-300">
-                      {plan.features.map((feat, i) => (
-                        <li key={i} className="flex items-start gap-2">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
-                          <span>{feat}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div className="pt-6">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenSlots(plan.period as BillingPeriod)}
-                      className={`w-full py-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  return (
+                    <div
+                      key={plan.id || plan.period}
+                      className={`rounded-2xl p-6 flex flex-col justify-between border transition-all duration-200 ${
                         isPopular
-                          ? 'bg-[#6320ee] text-white hover:bg-[#5218cc] shadow-xs'
-                          : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white hover:bg-slate-200 dark:hover:bg-slate-700'
+                          ? 'border-[#6320ee] bg-purple-50/30 dark:bg-purple-950/20 shadow-lg ring-2 ring-[#6320ee]/30 relative'
+                          : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs hover:border-slate-300'
                       }`}
                     >
-                      {isAuthenticated ? `Select ${plan.title}` : `Choose ${plan.durationLabel} Plan`}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                      {isPopular && (
+                        <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-[#6320ee] text-white text-[10px] font-extrabold uppercase tracking-wider py-1 px-3 rounded-full shadow-xs">
+                          {plan.badgeText || 'Best Value · Save 30%'}
+                        </span>
+                      )}
+
+                      <div className="flex flex-col gap-4">
+                        <div>
+                          <h4 className="text-base font-bold text-slate-900 dark:text-white">
+                            {plan.title}
+                          </h4>
+                          <span className="text-xs text-slate-400 font-medium">
+                            {plan.durationLabel || `${plan.durationDays} Days`} Access
+                          </span>
+                        </div>
+
+                        <div className="flex items-baseline gap-1">
+                          <span className="text-3xl font-extrabold text-slate-900 dark:text-white tabular-nums">
+                            {price}
+                          </span>
+                          <span className="text-xs text-slate-400">/{plan.durationLabel || `${plan.durationDays} Days`}</span>
+                        </div>
+
+                        <div className="text-xs font-semibold text-[#6320ee] dark:text-[#a855f7] bg-purple-50 dark:bg-purple-950/40 p-2 rounded-lg">
+                          *{plan.storageGB || 10}GB Cloud Video Storage
+                        </div>
+
+                        <ul className="flex flex-col gap-2 pt-2 text-xs text-slate-600 dark:text-slate-300">
+                          {(plan.features && plan.features.length > 0 ? plan.features : ['24/7 Continuous Loop Streaming', `${plan.storageGB || 10}GB Cloud Storage`, 'Full 1080p 60fps Broadcast Quality']).map((feat, i) => (
+                            <li key={i} className="flex items-start gap-2">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                              <span>{feat}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      <div className="pt-6">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenSlots(plan.period as BillingPeriod)}
+                          className={`w-full py-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            isPopular
+                              ? 'bg-[#6320ee] text-white hover:bg-[#5218cc] shadow-xs'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white hover:bg-slate-200 dark:hover:bg-slate-700'
+                          }`}
+                        >
+                          {isAuthenticated ? `Select ${plan.title}` : `Choose ${plan.durationLabel || plan.period} Plan`}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
       </section>
 

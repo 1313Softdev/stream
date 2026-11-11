@@ -28,9 +28,6 @@ import {
   ShieldCheck,
   AlertTriangle,
   HelpCircle,
-  Gauge,
-  Sliders,
-  RotateCcw,
   Lock,
   QrCode,
 } from 'lucide-react';
@@ -57,47 +54,39 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
   onScheduleStream,
   onCancelSchedule,
 }) => {
-  const [slotName, setSlotName] = useState(slot.name);
-  const [streamKey, setStreamKey] = useState(slot.streamKey);
-  const [platform, setPlatform] = useState<StreamingPlatform>(slot.platform);
-  const [streamLoop, setStreamLoop] = useState(slot.streamLoop);
-  const [streamEndTime, setStreamEndTime] = useState(slot.streamEndTime);
-  const [selectedVideoId, setSelectedVideoId] = useState<string | undefined>(slot.videoId);
+  const [slotName, setSlotName] = useState(slot?.name || '');
+  const [streamKey, setStreamKey] = useState(slot?.streamKey || '');
+  const [platform, setPlatform] = useState<StreamingPlatform>(slot?.platform || 'YouTube');
+  const [streamLoop, setStreamLoop] = useState(slot?.streamLoop ?? true);
+  const [streamEndTime, setStreamEndTime] = useState(slot?.streamEndTime || '');
+  const [selectedVideoId, setSelectedVideoId] = useState<string | undefined>(slot?.videoId || undefined);
   const [autoStartOnKeyUpdate, setAutoStartOnKeyUpdate] = useState<boolean>(
-    slot.autoStartOnKeyUpdate ?? true
+    slot?.autoStartOnKeyUpdate ?? true
   );
 
-  const isExpired = slot.status === 'expired' || (Boolean(slot.expiresAt) && slot.expiresAt! > 0 && slot.expiresAt! <= Date.now());
-  const isPendingApproval = slot.status === 'pending_approval';
+  const isExpired = slot?.status === 'expired' || (Boolean(slot?.expiresAt) && slot?.expiresAt! > 0 && slot?.expiresAt! <= Date.now());
+  const isPendingApproval = slot?.status === 'pending_approval';
 
-  // Stream Quality & Bitrate Settings
-  const [targetBitrateKbps, setTargetBitrateKbps] = useState<number>(
-    slot.targetBitrateKbps ?? 2500
-  );
-  const [fpsPreset, setFpsPreset] = useState<30 | 60>(
-    slot.fpsPreset ?? 30
-  );
-  const [audioBitrateKbps, setAudioBitrateKbps] = useState<number>(
-    slot.audioBitrateKbps ?? 128
-  );
-  const [qualityPreset, setQualityPreset] = useState<string>(
-    slot.qualityPresetName ?? (slot.targetBitrateKbps === 5000 ? '1080p-5000' : slot.targetBitrateKbps === 4500 ? '1080p-4500' : slot.targetBitrateKbps === 8000 ? '2k-8000' : slot.targetBitrateKbps && slot.targetBitrateKbps !== 2500 ? 'custom' : '720p-2500')
-  );
+  // Stream Quality & Bitrate parameters
+  const targetBitrateKbps = slot?.targetBitrateKbps ?? 2500;
+  const fpsPreset: 30 | 60 = (slot?.fpsPreset as 30 | 60) ?? 30;
+  const audioBitrateKbps = slot?.audioBitrateKbps ?? 128;
+  const qualityPreset = slot?.qualityPresetName || '1080p';
 
   // Stream Key Actions state
   const [isKeySaving, setIsKeySaving] = useState(false);
   const [keyJustUpdated, setKeyJustUpdated] = useState(false);
   const [copiedRtmp, setCopiedRtmp] = useState(false);
   const [customRtmpUrl, setCustomRtmpUrl] = useState(
-    slot.rtmpServerUrl || 'rtmp://a.rtmp.youtube.com/live2'
+    slot?.rtmpServerUrl || 'rtmps://a.rtmp.youtube.com:443/live2'
   );
 
   // Schedule Stream Start Options
   const [scheduleStartEnabled, setScheduleStartEnabled] = useState<boolean>(
-    slot.scheduleStartEnabled ?? (slot.streamStatus === 'Scheduled')
+    slot?.scheduleStartEnabled ?? (slot?.streamStatus === 'Scheduled')
   );
   const [streamStartTime, setStreamStartTime] = useState<string>(
-    slot.streamStartTime || 'October 30th, 2026 06:00 PM'
+    slot?.streamStartTime || 'October 30th, 2026 06:00 PM'
   );
 
   const [showStreamKey, setShowStreamKey] = useState(false);
@@ -114,41 +103,41 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
 
   // Synchronize state when slot prop updates from Realtime Firestore
   useEffect(() => {
-    setSlotName(slot.name);
-    setStreamKey(slot.streamKey);
-    setPlatform(slot.platform);
-    setStreamLoop(slot.streamLoop);
-    setStreamEndTime(slot.streamEndTime);
-    setSelectedVideoId(slot.videoId);
+    if (!slot) return;
+    setSlotName(slot.name || '');
+    setStreamKey(slot.streamKey || '');
+    setPlatform(slot.platform || 'YouTube');
+    setStreamLoop(Boolean(slot.streamLoop));
+    setStreamEndTime(slot.streamEndTime || '');
+    setSelectedVideoId(slot.videoId || undefined);
     setAutoStartOnKeyUpdate(slot.autoStartOnKeyUpdate ?? true);
     setScheduleStartEnabled(slot.scheduleStartEnabled ?? (slot.streamStatus === 'Scheduled'));
     if (slot.streamStartTime) setStreamStartTime(slot.streamStartTime);
     if (slot.rtmpServerUrl) setCustomRtmpUrl(slot.rtmpServerUrl);
-    if (slot.targetBitrateKbps) setTargetBitrateKbps(slot.targetBitrateKbps);
-    if (slot.fpsPreset) setFpsPreset(slot.fpsPreset);
-    if (slot.audioBitrateKbps) setAudioBitrateKbps(slot.audioBitrateKbps);
-    if (slot.qualityPresetName) setQualityPreset(slot.qualityPresetName);
-  }, [slot.id, slot.name, slot.streamKey, slot.platform, slot.streamLoop, slot.videoId, slot.streamStatus, slot.autoStartOnKeyUpdate, slot.streamStartTime, slot.rtmpServerUrl, slot.targetBitrateKbps, slot.fpsPreset, slot.audioBitrateKbps, slot.qualityPresetName]);
+  }, [slot?.id, slot?.name, slot?.streamKey, slot?.platform, slot?.streamLoop, slot?.videoId, slot?.streamStatus, slot?.autoStartOnKeyUpdate, slot?.streamStartTime, slot?.rtmpServerUrl]);
 
-  // Live countdown timer for "Expires in : HH:MM:SS"
-  const [timeLeft, setTimeLeft] = useState({ hours: 14, minutes: 30, seconds: 38 });
+  // Live countdown timer computed from real slot.expiresAt
+  const [secondsRemaining, setSecondsRemaining] = useState<number>(() => {
+    if (slot?.expiresAt && slot.expiresAt > Date.now()) {
+      return Math.floor((slot.expiresAt - Date.now()) / 1000);
+    }
+    return 0;
+  });
 
   // Simulated countdown for scheduled start
   const [scheduledCountdown, setScheduledCountdown] = useState({ hours: 3, minutes: 29, seconds: 22 });
 
   useEffect(() => {
+    const update = () => {
+      if (slot?.expiresAt && slot.expiresAt > Date.now()) {
+        setSecondsRemaining(Math.max(0, Math.floor((slot.expiresAt - Date.now()) / 1000)));
+      } else {
+        setSecondsRemaining(0);
+      }
+    };
+    update();
     const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev.seconds > 0) {
-          return { ...prev, seconds: prev.seconds - 1 };
-        } else if (prev.minutes > 0) {
-          return { ...prev, minutes: prev.minutes - 1, seconds: 59 };
-        } else if (prev.hours > 0) {
-          return { hours: prev.hours - 1, minutes: 59, seconds: 59 };
-        }
-        return prev;
-      });
-
+      update();
       setScheduledCountdown((prev) => {
         if (prev.seconds > 0) {
           return { ...prev, seconds: prev.seconds - 1 };
@@ -161,7 +150,7 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [slot?.expiresAt]);
 
   // Poll cloud telemetry when live
   useEffect(() => {
@@ -181,7 +170,7 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
   }, [slot.id, slot.streamStatus]);
 
   const handleProbeKey = async () => {
-    if (!streamKey.trim()) {
+    if (!(streamKey || '').trim()) {
       setNotificationToast('Please paste a stream key before running the handshake probe.');
       setTimeout(() => setNotificationToast(null), 3500);
       return;
@@ -251,99 +240,6 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
     }
   };
 
-  // Quality Preset & Bitrate Change Handlers
-  const handleQualityPresetSelect = (preset: { id: string; name: string; bitrate: number; fps: number; audio: number }) => {
-    setTargetBitrateKbps(preset.bitrate);
-    setFpsPreset(preset.fps as 30 | 60);
-    setAudioBitrateKbps(preset.audio);
-    setQualityPreset(preset.id);
-
-    const updated: Slot = {
-      ...slot,
-      name: slotName,
-      streamKey,
-      platform,
-      streamLoop,
-      scheduleStartEnabled,
-      streamStartTime,
-      streamEndTime,
-      videoId: selectedVideoId,
-      autoStartOnKeyUpdate,
-      targetBitrateKbps: preset.bitrate,
-      fpsPreset: preset.fps as 30 | 60,
-      audioBitrateKbps: preset.audio,
-      qualityPresetName: preset.id,
-    };
-    onUpdateSlot(updated);
-    setNotificationToast(`Quality preset applied: ${preset.name} (${preset.bitrate} Kbps @ ${preset.fps} FPS)`);
-    setTimeout(() => setNotificationToast(null), 3000);
-  };
-
-  const handleCustomBitrateChange = (val: number) => {
-    const clamped = Math.max(1000, Math.min(15000, val));
-    setTargetBitrateKbps(clamped);
-    setQualityPreset('custom');
-
-    const updated: Slot = {
-      ...slot,
-      name: slotName,
-      streamKey,
-      platform,
-      streamLoop,
-      scheduleStartEnabled,
-      streamStartTime,
-      streamEndTime,
-      videoId: selectedVideoId,
-      autoStartOnKeyUpdate,
-      targetBitrateKbps: clamped,
-      fpsPreset,
-      audioBitrateKbps,
-      qualityPresetName: 'custom',
-    };
-    onUpdateSlot(updated);
-  };
-
-  const handleFpsChange = (fps: 30 | 60) => {
-    setFpsPreset(fps);
-    const updated: Slot = {
-      ...slot,
-      name: slotName,
-      streamKey,
-      platform,
-      streamLoop,
-      scheduleStartEnabled,
-      streamStartTime,
-      streamEndTime,
-      videoId: selectedVideoId,
-      autoStartOnKeyUpdate,
-      targetBitrateKbps,
-      fpsPreset: fps,
-      audioBitrateKbps,
-      qualityPresetName: qualityPreset,
-    };
-    onUpdateSlot(updated);
-  };
-
-  const handleAudioBitrateChange = (audio: number) => {
-    setAudioBitrateKbps(audio);
-    const updated: Slot = {
-      ...slot,
-      name: slotName,
-      streamKey,
-      platform,
-      streamLoop,
-      scheduleStartEnabled,
-      streamStartTime,
-      streamEndTime,
-      videoId: selectedVideoId,
-      autoStartOnKeyUpdate,
-      targetBitrateKbps,
-      fpsPreset,
-      audioBitrateKbps: audio,
-      qualityPresetName: qualityPreset,
-    };
-    onUpdateSlot(updated);
-  };
 
   // 1. Save stream key without forcibly interrupting/starting unless requested
   const handleSaveKeyOnly = (keyToSave?: string) => {
@@ -540,7 +436,7 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
       setShowVideoModal(true);
       return;
     }
-    if (!streamStartTime.trim()) {
+    if (!(streamStartTime || '').trim()) {
       setNotificationToast('Please specify a valid start date and time.');
       setTimeout(() => setNotificationToast(null), 3500);
       return;
@@ -575,10 +471,19 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
   const isStreaming = slot.streamStatus === 'Live';
   const isScheduled = slot.streamStatus === 'Scheduled';
 
-  // Format countdown strings
-  const formattedCountdown = `${String(timeLeft.hours).padStart(2, '0')}:${String(
-    timeLeft.minutes
-  ).padStart(2, '0')}:${String(timeLeft.seconds).padStart(2, '0')}`;
+  // Format countdown strings from real remaining time
+  const formatExpiresCountdown = (totalSec: number) => {
+    if (totalSec <= 0) return '00:00:00';
+    const d = Math.floor(totalSec / 86400);
+    const h = Math.floor((totalSec % 86400) / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    if (d > 0) {
+      return `${d}d ${String(h).padStart(2, '0')}h ${String(m).padStart(2, '0')}m`;
+    }
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  };
+  const formattedCountdown = formatExpiresCountdown(secondsRemaining);
 
   const formattedScheduledCountdown = `${String(scheduledCountdown.hours).padStart(2, '0')}:${String(
     scheduledCountdown.minutes
@@ -671,11 +576,18 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
               <AlertCircle className="w-5 h-5" />
             </div>
             <div>
-              <h4 className="text-sm font-bold text-red-900 dark:text-red-200">
-                Slot Subscription Expired
-              </h4>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h4 className="text-sm font-bold text-red-900 dark:text-red-200">
+                  Slot Subscription Expired
+                </h4>
+                {slot?.expiresAt ? (
+                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-900/60 text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800">
+                    Auto-delete in {Math.max(1, 15 - Math.floor((Date.now() - slot.expiresAt) / (24 * 3600 * 1000)))} day{Math.max(1, 15 - Math.floor((Date.now() - slot.expiresAt) / (24 * 3600 * 1000))) === 1 ? '' : 's'}
+                  </span>
+                ) : null}
+              </div>
               <p className="text-xs text-red-700 dark:text-red-300 mt-0.5">
-                This slot has expired. Live streaming is closed. Renew your subscription to resume broadcasting 24/7 continuous loops.
+                This slot has expired. Unrenewed expired slots are automatically deleted after 15 days. Renew your subscription to resume broadcasting 24/7 continuous loops.
               </p>
             </div>
           </div>
@@ -872,28 +784,31 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
               </div>
 
               {/* Demo Key Notice if current key is the mock placeholder */}
-              {(streamKey.trim() === 'hdef-dcea-vtkm-m7hw-50s0' || streamKey.trim().startsWith('live-')) && (
-                <div className="p-2.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-900 dark:text-amber-200 text-xs flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 font-medium">
-                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                    <span>Demo Key active. Replace with your YouTube Stream Key to broadcast online.</span>
+              {(() => {
+                const safeKey = (streamKey || '').trim();
+                return (safeKey === 'hdef-dcea-vtkm-m7hw-50s0' || safeKey.startsWith('live-')) ? (
+                  <div className="p-2.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-900 dark:text-amber-200 text-xs flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 font-medium">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Demo Key active. Replace with your YouTube Stream Key to broadcast online.</span>
+                    </div>
+                    <a
+                      href="https://studio.youtube.com/channel/live"
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="font-bold text-[#6320ee] dark:text-[#a855f7] hover:underline flex items-center gap-1 shrink-0"
+                    >
+                      <span>Get Key</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
                   </div>
-                  <a
-                    href="https://studio.youtube.com/channel/live"
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="font-bold text-[#6320ee] dark:text-[#a855f7] hover:underline flex items-center gap-1 shrink-0"
-                  >
-                    <span>Get Key</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                </div>
-              )}
+                ) : null;
+              })()}
 
               <div className="relative flex items-center">
                 <input
                   type={showStreamKey ? 'text' : 'password'}
-                  value={streamKey}
+                  value={streamKey || ''}
                   onChange={(e) => setStreamKey(e.target.value)}
                   onBlur={() => handleSaveKeyOnly(streamKey)}
                   className="w-full px-3.5 py-2.5 pr-20 text-sm font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-[#6320ee]"
@@ -923,10 +838,10 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
               {/* Stream Key Realtime Feedback */}
               <div className="flex items-center justify-between mt-1.5 text-[11px]">
                 <span className="text-slate-500 dark:text-slate-400">
-                  {streamKey.trim().length > 0 ? (
+                  {(streamKey || '').trim().length > 0 ? (
                     <span className="text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
                       <CheckCircle2 className="w-3 h-3" />
-                      Stream key entered ({streamKey.trim().length} chars)
+                      Stream key entered ({(streamKey || '').trim().length} chars)
                     </span>
                   ) : (
                     <span className="text-amber-600 dark:text-amber-400 font-medium">
@@ -1224,203 +1139,6 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
             </div>
           </div>
 
-          {/* Stream Quality & Bitrate Settings Section */}
-          <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xs flex flex-col gap-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
-                  <Gauge className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                      Stream Quality & Bitrate Settings
-                    </h4>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300">
-                      {targetBitrateKbps} Kbps · {fpsPreset} FPS
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Configure broadcast encoding bitrate and frame rate to satisfy platform ingest requirements
-                  </p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setTargetBitrateKbps(2500);
-                  setFpsPreset(30);
-                  setAudioBitrateKbps(128);
-                  setQualityPresetName('720p-2500');
-                  onUpdateSlot({
-                    ...slot,
-                    targetBitrateKbps: 2500,
-                    fpsPreset: 30,
-                    audioBitrateKbps: 128,
-                    qualityPresetName: '720p-2500',
-                  });
-                  setNotificationToast('✅ Reset to Default Quality Settings (720p HD · 2500 Kbps @ 30 FPS)');
-                  setTimeout(() => setNotificationToast(null), 3500);
-                }}
-                className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 text-xs font-semibold flex items-center gap-1.5 self-start sm:self-auto cursor-pointer transition-colors"
-                title="Reset to default YouTube recommended parameters (720p / 2500k CBR / 30fps)"
-              >
-                <RotateCcw className="w-3.5 h-3.5 text-purple-500" />
-                <span>Reset to Defaults</span>
-              </button>
-            </div>
-
-            {/* Quick Quality Presets */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
-                Quality Presets
-              </label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                {[
-                  { id: '720p-2500', name: '720p HD', bitrate: 2500, fps: 30, audio: 128, label: 'YouTube Rec Min' },
-                  { id: '1080p-4500', name: '1080p Standard', bitrate: 4500, fps: 30, audio: 128, label: 'Full HD 30fps' },
-                  { id: '1080p-5000', name: '1080p Pro', bitrate: 5000, fps: 60, audio: 160, label: 'YouTube 60fps' },
-                  { id: '2k-8000', name: '2K / Ultra', bitrate: 8000, fps: 60, audio: 192, label: 'Max Fidelity' },
-                ].map((preset) => {
-                  const isSelected = targetBitrateKbps === preset.bitrate && fpsPreset === preset.fps;
-                  return (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      onClick={() => handleQualityPresetSelect(preset)}
-                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer relative ${
-                        isSelected
-                          ? 'bg-[#6320ee]/10 border-[#6320ee] text-[#6320ee] dark:text-purple-300 ring-1 ring-[#6320ee]'
-                          : 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700/80 hover:border-slate-300 dark:hover:border-slate-600'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-bold text-slate-900 dark:text-white">
-                          {preset.name}
-                        </span>
-                        {isSelected && <Check className="w-3.5 h-3.5 text-[#6320ee]" />}
-                      </div>
-                      <div className="text-[12px] font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                        {preset.bitrate} Kbps
-                      </div>
-                      <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                        {preset.fps} FPS · {preset.label}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Fine-Tuning Controls */}
-            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-3.5">
-              {/* Bitrate Slider & Number Input */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                    <span>Target Video Bitrate</span>
-                    <span className="text-[10px] font-normal text-slate-500 dark:text-slate-400">
-                      (YouTube recommends 2500 - 6000 Kbps)
-                    </span>
-                  </label>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="number"
-                      min="1000"
-                      max="12000"
-                      step="100"
-                      value={targetBitrateKbps}
-                      onChange={(e) => handleCustomBitrateChange(Number(e.target.value))}
-                      className="w-20 px-2 py-1 text-xs font-mono font-bold text-right bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-[#6320ee]"
-                    />
-                    <span className="text-xs font-semibold text-slate-500">Kbps</span>
-                  </div>
-                </div>
-
-                <input
-                  type="range"
-                  min="1500"
-                  max="10000"
-                  step="250"
-                  value={targetBitrateKbps}
-                  onChange={(e) => handleCustomBitrateChange(Number(e.target.value))}
-                  className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-[#6320ee]"
-                />
-
-                <div className="flex justify-between text-[10px] text-slate-400 mt-1 font-mono">
-                  <span>1500k</span>
-                  <span className="text-emerald-500 font-bold">2500k (Rec)</span>
-                  <span className="text-purple-400 font-bold">5000k</span>
-                  <span>8000k</span>
-                  <span>10000k</span>
-                </div>
-
-                {/* Bitrate Recommendation Tip */}
-                <div className="mt-2 text-[11px] p-2 rounded-lg bg-slate-50 dark:bg-slate-800/70 border border-slate-200/70 dark:border-slate-700/60 text-slate-600 dark:text-slate-300 flex items-start gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
-                  <span>
-                    {targetBitrateKbps < 2500 ? (
-                      <strong className="text-amber-600 dark:text-amber-400">
-                        Bitrate is below 2500 Kbps: YouTube Live will show a "bitrate lower than recommended" warning.
-                      </strong>
-                    ) : targetBitrateKbps <= 3500 ? (
-                      <span>Optimal 720p HD streaming. Strictly maintains constant 2500+ Kbps so YouTube never gives warnings.</span>
-                    ) : targetBitrateKbps <= 6000 ? (
-                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                        Excellent 1080p Full HD broadcast bitrate. Delivers ultra crisp 60fps video quality.
-                      </span>
-                    ) : (
-                      <span>Ultra high-bitrate broadcast. Delivers master studio fidelity for high-motion content.</span>
-                    )}
-                  </span>
-                </div>
-              </div>
-
-              {/* Frame Rate (FPS) and Audio Bitrate Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                {/* Frame Rate */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                    Frame Rate (FPS)
-                  </label>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {[30, 60].map((f) => (
-                      <button
-                        key={f}
-                        type="button"
-                        onClick={() => handleFpsChange(f as 30 | 60)}
-                        className={`py-2 px-3 text-xs font-semibold rounded-lg border text-center transition-colors cursor-pointer ${
-                          fpsPreset === f
-                            ? 'bg-[#6320ee] text-white border-[#6320ee]'
-                            : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50'
-                        }`}
-                      >
-                        {f} FPS {f === 30 ? '(Standard)' : '(High Motion)'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Audio Bitrate */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                    Audio Bitrate (AAC Stereo)
-                  </label>
-                  <select
-                    value={audioBitrateKbps}
-                    onChange={(e) => handleAudioBitrateChange(Number(e.target.value))}
-                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white text-xs font-medium py-2 px-3 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#6320ee] cursor-pointer"
-                  >
-                    <option value={128}>128 Kbps (YouTube Standard)</option>
-                    <option value={160}>160 Kbps (High Fidelity)</option>
-                    <option value={192}>192 Kbps (Pro Audio)</option>
-                    <option value={256}>256 Kbps (Studio Master)</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-          </div>
 
           {/* Schedule Stream Start Section */}
           <div className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xs flex flex-col gap-4">
@@ -1696,7 +1414,7 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
         ) : (
           <button
             onClick={() => {
-              const targetKey = streamKey.trim();
+              const targetKey = (streamKey || '').trim();
               if (!targetKey) {
                 setNotificationToast('Please paste your YouTube stream key first.');
                 setTimeout(() => setNotificationToast(null), 3500);

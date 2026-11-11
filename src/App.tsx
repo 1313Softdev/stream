@@ -4,8 +4,8 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Clock } from 'lucide-react';
-import { Slot, VideoItem, UserProfile, BillingPeriod } from './types';
+import { Clock, Radio } from 'lucide-react';
+import { Slot, VideoItem, UserProfile, BillingPeriod, StreamingPlatform, SlotStatus, SubscriptionPlanItem } from './types';
 import { BILLING_PLANS } from './config/billingPlans';
 import { PRESET_SAMPLE_VIDEOS } from './config/presetVideos';
 import { Sidebar, AppView } from './components/Sidebar';
@@ -23,6 +23,7 @@ import { AuthPageView } from './components/AuthPageView';
 import { TutorialModal } from './components/TutorialModal';
 import { ContactModal } from './components/ContactModal';
 import { LiveStreamSimulatorModal } from './components/LiveStreamSimulatorModal';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import {
   auth,
   onAuthStateChanged,
@@ -44,6 +45,8 @@ import {
   getStoredAuthToken,
   logoutUserSession,
   fetchPublicSettings,
+  fetchPublicPlans,
+  formatSlotExpirationDate,
 } from './lib/api';
 import { startCloudStream, stopCloudStream } from './lib/streamingService';
 
@@ -239,6 +242,56 @@ export default function App() {
     slots[0]?.id || DEFAULT_INITIAL_SLOT.id
   );
 
+  // Dynamic Subscription Plans State (synced with MySQL database & Admin customizations)
+  const [plans, setPlans] = useState<SubscriptionPlanItem[]>(() => {
+    try {
+      const cached = localStorage.getItem('streamadda_plans');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return [];
+  });
+
+  const refreshPlans = async () => {
+    try {
+      const fetched = await fetchPublicPlans();
+      if (Array.isArray(fetched) && fetched.length > 0) {
+        setPlans(fetched);
+        localStorage.setItem('streamadda_plans', JSON.stringify(fetched));
+      }
+    } catch (e) {
+      console.error('Failed to load subscription plans:', e);
+    }
+  };
+
+  useEffect(() => {
+    refreshPlans();
+
+    const handlePlansUpdated = () => {
+      refreshPlans();
+    };
+    window.addEventListener('streamadda_plans_updated', handlePlansUpdated);
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'streamadda_plans') {
+        try {
+          if (e.newValue) setPlans(JSON.parse(e.newValue));
+        } catch {}
+      }
+    });
+
+    const plansInterval = setInterval(refreshPlans, 8000);
+
+    return () => {
+      window.removeEventListener('streamadda_plans_updated', handlePlansUpdated);
+      clearInterval(plansInterval);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (currentView === 'billing' || currentView === 'live-slots') {
+      refreshPlans();
+    }
+  }, [currentView]);
+
   // Sync theme changes with DOM
   useEffect(() => {
     if (isDark) {
@@ -310,8 +363,9 @@ export default function App() {
           saveUserProfile(user).catch(console.error);
         }
 
-        // 2. Fetch slots from MySQL for this user
-        const targetUserId = remoteUser?.id || user.id;
+        // 2. Fetch slots from MySQL for this user (or all slots for admin)
+        const isUserAdmin = (remoteUser?.role || user.role) === 'admin';
+        const targetUserId = isUserAdmin ? undefined : (remoteUser?.id || user.id);
         const remoteSlots = await fetchSlots(targetUserId);
         if (isMounted) {
           // Users only have slots they have subscribed to and paid for (no free trial)
@@ -321,7 +375,7 @@ export default function App() {
           } else {
             setSelectedSlotId('');
           }
-          localStorage.setItem(`streamadda_slots_${targetUserId}`, JSON.stringify(remoteSlots || []));
+          localStorage.setItem(`streamadda_slots_${remoteUser?.id || user.id}`, JSON.stringify(remoteSlots || []));
         }
 
         // 3. Fetch videos from MySQL strictly for this user (never expose other users' database videos)
@@ -373,8 +427,9 @@ export default function App() {
           if (isMounted) setIsRealtimeConnected(false);
         });
 
-      const currentUid = (user?.id && user.id !== 'usr_guest') ? user.id : undefined;
-      if (currentUid) {
+      const isUserAdmin = user?.role === 'admin';
+      const currentUid = isUserAdmin ? undefined : ((user?.id && user.id !== 'usr_guest') ? user.id : undefined);
+      if (isUserAdmin || currentUid) {
         fetchSlots(currentUid)
           .then((s) => {
             if (isMounted && s) setSlots(s);
@@ -389,14 +444,36 @@ export default function App() {
     };
   }, [user.id]);
 
-  // Automatic Slot Expiration Watchdog: Detects slot expiration in real-time, stops active broadcasts, and sets status to expired
+  // Automatic Slot Expiration & 15-Day Auto-Deletion Watchdog
   useEffect(() => {
+    const FIFTEEN_DAYS_MS = 15 * 24 * 60 * 60 * 1000;
     const watchdogTimer = setInterval(() => {
       const now = Date.now();
       setSlots((prev) => {
         let hasChanges = false;
-        const checkedSlots = prev.map((s) => {
-          const isSlotExpired = Boolean(s.expiresAt) && s.expiresAt! > 0 && s.expiresAt! <= now;
+        const slotsToKeep: Slot[] = [];
+
+        for (const s of prev) {
+          let expiresAtMs = s.expiresAt && s.expiresAt > 0 ? s.expiresAt : 0;
+          if (!expiresAtMs && s.expireOn) {
+            const parsed = Date.parse(s.expireOn.replace('-', ' '));
+            if (!isNaN(parsed) && parsed > 0) expiresAtMs = parsed;
+          }
+
+          const isSlotExpired = s.status === 'expired' || (expiresAtMs > 0 && expiresAtMs <= now);
+
+          // If slot has been expired for 15 days or more, auto-delete it completely
+          if (isSlotExpired && expiresAtMs > 0 && (now - expiresAtMs >= FIFTEEN_DAYS_MS)) {
+            hasChanges = true;
+            console.log(`[Watchdog] Auto-deleting slot ${s.id} ("${s.name}") after 15 days expired.`);
+            deleteSlot(s.id).catch(console.error);
+            if (selectedSlotId === s.id) {
+              const remainingOther = prev.find((other) => other.id !== s.id);
+              setSelectedSlotId(remainingOther ? remainingOther.id : '');
+            }
+            continue; // Skip keeping this slot
+          }
+
           if (isSlotExpired && (s.status !== 'expired' || s.streamStatus === 'Live')) {
             hasChanges = true;
             // Stop active cloud broadcast immediately
@@ -407,24 +484,27 @@ export default function App() {
               ...s,
               status: 'expired',
               streamStatus: 'Off',
+              expiresAt: expiresAtMs || s.expiresAt,
             };
             saveSlot(updatedExpired).catch(() => {});
-            return updatedExpired;
+            slotsToKeep.push(updatedExpired);
+          } else {
+            slotsToKeep.push(s);
           }
-          return s;
-        });
+        }
 
         if (hasChanges) {
           const uId = user.id || 'usr_guest';
-          localStorage.setItem(`streamadda_slots_${uId}`, JSON.stringify(checkedSlots));
-          return checkedSlots;
+          localStorage.setItem(`streamadda_slots_${uId}`, JSON.stringify(slotsToKeep));
+          localStorage.setItem('streamadda_slots', JSON.stringify(slotsToKeep));
+          return slotsToKeep;
         }
         return prev;
       });
     }, 5000);
 
     return () => clearInterval(watchdogTimer);
-  }, [user.id]);
+  }, [user.id, selectedSlotId]);
 
   const handleToggleTheme = () => {
     const newTheme = isDark ? 'light' : 'dark';
@@ -501,7 +581,7 @@ export default function App() {
       setVideos(userVideos || []);
       localStorage.setItem(`streamadda_videos_${authedUser.id}`, JSON.stringify(userVideos || []));
 
-      const userSlots = await fetchSlots(authedUser.id);
+      const userSlots = await fetchSlots(authedUser.role === 'admin' ? undefined : authedUser.id);
       setSlots(userSlots || []);
       if (userSlots && userSlots.length > 0) {
         setSelectedSlotId(userSlots[0].id);
@@ -529,8 +609,21 @@ export default function App() {
   };
 
   // Slot handlers with MySQL Backend Persistence
-  const handleSelectSlot = (slot: Slot) => {
-    setSelectedSlotId(slot.id);
+  const handleSelectSlot = (slotOrId: Slot | string) => {
+    const targetId = typeof slotOrId === 'string' ? slotOrId.trim() : slotOrId?.id?.trim();
+    if (targetId) {
+      setSelectedSlotId(targetId);
+      // Ensure the slot exists in state; if not, re-fetch slots from database
+      const exists = slots.some((s) => String(s.id).trim() === targetId);
+      if (!exists) {
+        const isUserAdmin = user?.role === 'admin';
+        fetchSlots(isUserAdmin ? undefined : user?.id)
+          .then((fresh) => {
+            if (fresh && fresh.length > 0) setSlots(fresh);
+          })
+          .catch(() => {});
+      }
+    }
     setCurrentView('slot-details');
   };
 
@@ -651,16 +744,19 @@ export default function App() {
     planId?: string,
     requireApproval: boolean = true
   ): Slot => {
-    let days = 30;
-    const lowerPlan = String(planId || '').toLowerCase();
-    if (lowerPlan.includes('3 month') || lowerPlan.includes('quarter')) days = 90;
-    else if (lowerPlan.includes('month') || lowerPlan === 'months') days = 30;
-    else if (lowerPlan.includes('week') || lowerPlan === 'weeks') days = 7;
-    else if (lowerPlan.includes('day') || lowerPlan === 'days') days = 1;
+    const activePlan = plans.find((p) => p.id === planId || p.period === planId);
+    let days = activePlan?.durationDays || 30;
+    if (!activePlan) {
+      const lowerPlan = String(planId || '').toLowerCase();
+      if (lowerPlan.includes('year') || lowerPlan.includes('annual')) days = 365;
+      else if (lowerPlan.includes('3 month') || lowerPlan.includes('quarter')) days = 90;
+      else if (lowerPlan.includes('month') || lowerPlan === 'months') days = 30;
+      else if (lowerPlan.includes('week') || lowerPlan === 'weeks') days = 7;
+      else if (lowerPlan.includes('day') || lowerPlan === 'days') days = 1;
+    }
 
     const expiresAt = Date.now() + days * 24 * 3600 * 1000;
-    const d = new Date(expiresAt);
-    const expireOn = `${d.getDate()} ${d.toLocaleString('default', { month: 'short' })} ${d.getFullYear()} - 11:59 PM`;
+    const expireOn = formatSlotExpirationDate(expiresAt);
 
     const isUserAdmin = user?.role === 'admin';
     const status: SlotStatus = (!requireApproval || isUserAdmin) ? 'active' : 'pending_approval';
@@ -764,8 +860,9 @@ export default function App() {
   // Billing renewal/add with Subscription Plan and Payment Approval
   const handleRenewSlot = (slotId: string, period: BillingPeriod, count: number, utrNumber?: string) => {
     const isUserAdmin = user?.role === 'admin';
-    const addedDays = period === '3 Months' ? 90 : period === 'Months' ? 30 : period === 'Weeks' ? 7 : 1;
-    const plan = BILLING_PLANS[period];
+    const activePlan = plans.find((p) => p.period === period || p.id === period);
+    const addedDays = activePlan?.durationDays || (period === '3 Months' ? 90 : period === 'Months' ? 30 : period === 'Weeks' ? 7 : period === 'Year' ? 365 : 1);
+    const planPrice = activePlan ? activePlan.priceINR : (BILLING_PLANS[period]?.priceINR || 1999);
 
     setSlots((prev) =>
       prev.map((s) => {
@@ -773,15 +870,14 @@ export default function App() {
           if (isUserAdmin) {
             const currentExp = s.expiresAt && s.expiresAt > Date.now() ? s.expiresAt : Date.now();
             const newExpiresAt = currentExp + addedDays * count * 24 * 3600 * 1000;
-            const d = new Date(newExpiresAt);
-            const dateStr = `${d.getDate()} ${d.toLocaleString('default', { month: 'short' })} ${d.getFullYear()} - 11:59 PM`;
+            const dateStr = formatSlotExpirationDate(newExpiresAt);
             const updatedSlot: Slot = {
               ...s,
               status: 'active',
               paymentStatus: 'approved',
               expiresAt: newExpiresAt,
               expireOn: dateStr,
-              subscriptionPlanId: period,
+              subscriptionPlanId: activePlan?.id || period,
             };
             saveSlot(updatedSlot).catch(console.error);
 
@@ -792,7 +888,7 @@ export default function App() {
               period,
               count,
               currency: 'INR',
-              amount: (plan?.priceINR || 1999) * count,
+              amount: planPrice * count,
               status: 'completed',
               createdAt: new Date().toISOString(),
             }).catch(console.error);
@@ -804,7 +900,7 @@ export default function App() {
           const updatedSlot: Slot = {
             ...s,
             paymentStatus: 'pending',
-            subscriptionPlanId: period,
+            subscriptionPlanId: activePlan?.id || period,
             pendingUtrNumber: utrNumber,
           };
           saveSlot(updatedSlot).catch(console.error);
@@ -816,8 +912,9 @@ export default function App() {
             period,
             count,
             currency: 'INR',
-            amount: (plan?.priceINR || 1999) * count,
+            amount: planPrice * count,
             status: 'pending',
+            utrNumber,
             createdAt: new Date().toISOString(),
           }).catch(console.error);
 
@@ -829,20 +926,23 @@ export default function App() {
   };
 
   const handleApproveSlotFromAdmin = (slotId: string, planId?: string) => {
-    let days = 30;
-    const lowerPlan = String(planId || '').toLowerCase();
-    if (lowerPlan.includes('3 month') || lowerPlan.includes('quarter')) days = 90;
-    else if (lowerPlan.includes('month') || lowerPlan === 'months') days = 30;
-    else if (lowerPlan.includes('week') || lowerPlan === 'weeks') days = 7;
-    else if (lowerPlan.includes('day') || lowerPlan === 'days') days = 1;
+    const activePlan = plans.find((p) => p.id === planId || p.period === planId);
+    let days = activePlan?.durationDays || 30;
+    if (!activePlan) {
+      const lowerPlan = String(planId || '').toLowerCase();
+      if (lowerPlan.includes('year') || lowerPlan.includes('annual')) days = 365;
+      else if (lowerPlan.includes('3 month') || lowerPlan.includes('quarter')) days = 90;
+      else if (lowerPlan.includes('month') || lowerPlan === 'months') days = 30;
+      else if (lowerPlan.includes('week') || lowerPlan === 'weeks') days = 7;
+      else if (lowerPlan.includes('day') || lowerPlan === 'days') days = 1;
+    }
 
     setSlots((prev) =>
       prev.map((s) => {
         if (s.id === slotId || (slotId === '' && s.status === 'pending_approval')) {
           const currentExp = s.expiresAt && s.expiresAt > Date.now() ? s.expiresAt : Date.now();
           const newExpiresAt = currentExp + days * 24 * 3600 * 1000;
-          const d = new Date(newExpiresAt);
-          const dateStr = `${d.getDate()} ${d.toLocaleString('default', { month: 'short' })} ${d.getFullYear()} - 11:59 PM`;
+          const dateStr = formatSlotExpirationDate(newExpiresAt);
           const updated: Slot = {
             ...s,
             status: 'active',
@@ -857,46 +957,59 @@ export default function App() {
       })
     );
 
-    // Also immediately refresh user slots from backend
-    const currentUid = (user?.id && user.id !== 'usr_guest') ? user.id : undefined;
-    if (currentUid) {
-      fetchSlots(currentUid)
-        .then((s) => {
-          if (s && s.length > 0) setSlots(s);
-        })
-        .catch(() => {});
-    }
+    // Also immediately refresh all slots from backend and notify any listeners
+    const isUserAdmin = user?.role === 'admin';
+    const currentUid = isUserAdmin ? undefined : ((user?.id && user.id !== 'usr_guest') ? user.id : undefined);
+    fetchSlots(currentUid)
+      .then((s) => {
+        if (s) setSlots(s);
+      })
+      .catch(() => {});
+    window.dispatchEvent(new CustomEvent('streamadda_slots_updated'));
   };
 
   const handleAddSlotsPurchased = (period: BillingPeriod, count: number) => {
     const isUserAdmin = user?.role === 'admin';
-    for (let i = 0; i < count; i++) {
-      handleAddSlot(
-        `Slot ${Date.now() + i}`,
-        false,
-        undefined,
-        undefined,
-        undefined,
-        'YouTube',
-        period,
-        !isUserAdmin // require approval if not admin
-      );
+    const activePlan = plans.find((p) => p.period === period || p.id === period);
+    const planPrice = activePlan ? activePlan.priceINR : (BILLING_PLANS[period]?.priceINR || 1999);
+
+    // Only create direct slots immediately if user is Admin
+    // For regular users, slots are created strictly after payment confirmation by admin
+    if (isUserAdmin) {
+      for (let i = 0; i < count; i++) {
+        handleAddSlot(
+          `Slot ${Date.now() + i}`,
+          false,
+          undefined,
+          undefined,
+          undefined,
+          'YouTube',
+          activePlan?.id || period,
+          false
+        );
+      }
     }
-    const plan = BILLING_PLANS[period];
+
     recordOrder({
       id: `ord-${Date.now()}`,
       userId: user.id,
       period,
       count,
       currency: 'INR',
-      amount: (plan?.priceINR || 1999) * count,
+      amount: planPrice * count,
       status: isUserAdmin ? 'completed' : 'pending',
       createdAt: new Date().toISOString(),
     }).catch(console.error);
   };
 
-  const currentActiveSlot = slots.find((s) => s.id === selectedSlotId) || slots[0] || null;
-  const activeStreamingSlot = slots.find((s) => s.id === selectedSlotId) || slots.find((s) => s.streamStatus === 'Live') || currentActiveSlot;
+  const currentActiveSlot =
+    slots.find((s) => String(s.id).trim() === String(selectedSlotId).trim()) ||
+    slots[0] ||
+    null;
+  const activeStreamingSlot =
+    slots.find((s) => String(s.id).trim() === String(selectedSlotId).trim()) ||
+    slots.find((s) => s.streamStatus === 'Live') ||
+    currentActiveSlot;
   const currentSlotVideo = videos.find((v) => v.id === activeStreamingSlot?.videoId) || videos[0];
 
   // Resolve Header Title based on current view
@@ -957,6 +1070,7 @@ export default function App() {
           isAuthenticated={isAuthenticated}
           user={user}
           onLogout={handleLogout}
+          plans={plans}
         />
         <ContactModal
           isOpen={isContactOpen}
@@ -1044,102 +1158,112 @@ export default function App() {
 
         {/* Dynamic View Render */}
         <main className="flex-1 pb-16">
-          {currentView === 'dashboard' && (
-            <DashboardView
-              slots={slots}
-              videos={videos}
-              onNavigate={(view) => setCurrentView(view)}
-              onSelectSlot={handleSelectSlot}
-            />
-          )}
-
-          {currentView === 'live-slots' && (
-            <LiveSlotsView
-              slots={slots}
-              videos={videos}
-              user={user}
-              onSelectSlot={handleSelectSlot}
-              onNavigate={(view) => setCurrentView(view)}
-              onToggleStream={handleToggleStream}
-              onDeleteSlot={handleDeleteSlot}
-              onAddSlot={handleAddSlot}
-              onRenewSlot={handleRenewSlot}
-              initialPlanPeriod={pendingPlanPeriodRef.current || undefined}
-            />
-          )}
-
-          {currentView === 'slot-details' && (
-            currentActiveSlot ? (
-              <SlotDetailsView
-                slot={currentActiveSlot}
+          <ErrorBoundary onReset={() => setCurrentView('dashboard')}>
+            {currentView === 'dashboard' && (
+              <DashboardView
+                slots={slots}
                 videos={videos}
-                onUpdateSlot={handleUpdateSlot}
+                user={user}
+                onNavigate={(view) => setCurrentView(view)}
+                onSelectSlot={handleSelectSlot}
+              />
+            )}
+
+            {currentView === 'live-slots' && (
+              <LiveSlotsView
+                slots={slots}
+                videos={videos}
+                user={user}
+                plans={plans}
+                onSelectSlot={handleSelectSlot}
                 onNavigate={(view) => setCurrentView(view)}
                 onToggleStream={handleToggleStream}
-                onScheduleStream={handleScheduleStream}
-                onCancelSchedule={handleCancelSchedule}
+                onDeleteSlot={handleDeleteSlot}
+                onAddSlot={handleAddSlot}
+                onRenewSlot={handleRenewSlot}
+                initialPlanPeriod={pendingPlanPeriodRef.current || undefined}
               />
-            ) : (
-              <div className="max-w-2xl mx-auto px-6 py-20 text-center flex flex-col items-center gap-5">
-                <div className="w-16 h-16 rounded-2xl bg-purple-50 dark:bg-purple-950/40 text-[#6320ee] dark:text-[#a855f7] flex items-center justify-center">
-                  <Radio className="w-8 h-8" />
+            )}
+
+            {currentView === 'slot-details' && (
+              currentActiveSlot ? (
+                <SlotDetailsView
+                  slot={currentActiveSlot}
+                  videos={videos}
+                  onUpdateSlot={handleUpdateSlot}
+                  onNavigate={(view) => setCurrentView(view)}
+                  onToggleStream={handleToggleStream}
+                  onScheduleStream={handleScheduleStream}
+                  onCancelSchedule={handleCancelSchedule}
+                />
+              ) : (
+                <div className="max-w-2xl mx-auto px-6 py-20 text-center flex flex-col items-center gap-5">
+                  <div className="w-16 h-16 rounded-2xl bg-purple-50 dark:bg-purple-950/40 text-[#6320ee] dark:text-[#a855f7] flex items-center justify-center">
+                    <Radio className="w-8 h-8" />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <h3 className="text-xl font-bold text-slate-900 dark:text-white">
+                      No Live Slots Available
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md">
+                      You don't have any active streaming slots yet. Subscribe to a plan to start broadcasting 24/7 continuous loops with zero computer usage.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setCurrentView('live-slots')}
+                    className="px-6 py-2.5 text-xs font-bold text-white bg-[#6320ee] hover:bg-[#5218cc] rounded-xl shadow-md transition-all cursor-pointer"
+                  >
+                    Go to Live Slots & Subscribe
+                  </button>
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  <h3 className="text-xl font-bold text-slate-900 dark:text-white">
-                    No Live Slots Available
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md">
-                    You don't have any active streaming slots yet. Subscribe to a plan to start broadcasting 24/7 continuous loops with zero computer usage.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setCurrentView('live-slots')}
-                  className="px-6 py-2.5 text-xs font-bold text-white bg-[#6320ee] hover:bg-[#5218cc] rounded-xl shadow-md transition-all cursor-pointer"
-                >
-                  Go to Live Slots & Subscribe
-                </button>
-              </div>
-            )
-          )}
+              )
+            )}
 
-          {currentView === 'videos' && (
-            <VideosView
-              videos={videos}
-              user={user}
-              onAddVideo={handleAddVideo}
-              onDeleteVideo={handleDeleteVideo}
-            />
-          )}
+            {currentView === 'videos' && (
+              <VideosView
+                videos={videos}
+                user={user}
+                onAddVideo={handleAddVideo}
+                onDeleteVideo={handleDeleteVideo}
+              />
+            )}
 
-          {currentView === 'billing' && (
-            <BillingView
-              slots={slots}
-              user={user}
-              onRenewSlot={handleRenewSlot}
-              onAddSlotsPurchased={handleAddSlotsPurchased}
-              onOpenContact={() => setIsContactOpen(true)}
-            />
-          )}
+            {currentView === 'billing' && (
+              <BillingView
+                slots={slots}
+                user={user}
+                plans={plans}
+                onRenewSlot={handleRenewSlot}
+                onAddSlotsPurchased={handleAddSlotsPurchased}
+                onOpenContact={() => setIsContactOpen(true)}
+              />
+            )}
 
-          {currentView === 'profile' && (
-            <ProfileView
-              user={user}
-              isDark={isDark}
-              onUpdateUser={handleUpdateUser}
-              onSetTheme={handleSetTheme}
-              onLogout={handleLogout}
-            />
-          )}
+            {currentView === 'profile' && (
+              <ProfileView
+                user={user}
+                isDark={isDark}
+                onUpdateUser={handleUpdateUser}
+                onSetTheme={handleSetTheme}
+                onLogout={handleLogout}
+              />
+            )}
 
-          {currentView === 'admin' && isAdmin && (
-            <AdminDashboardView
-              currentUser={user}
-              slots={slots}
-              videos={videos}
-              onNavigateToSlots={() => setCurrentView('live-slots')}
-              onApproveSlot={handleApproveSlotFromAdmin}
-            />
-          )}
+            {currentView === 'admin' && isAdmin && (
+              <AdminDashboardView
+                currentUser={user}
+                slots={slots}
+                videos={videos}
+                onNavigateToSlots={() => setCurrentView('live-slots')}
+                onSelectSlot={handleSelectSlot}
+                onApproveSlot={handleApproveSlotFromAdmin}
+                onPlansChange={(newPlans) => {
+                  setPlans(newPlans);
+                  localStorage.setItem('streamadda_plans', JSON.stringify(newPlans));
+                }}
+              />
+            )}
+          </ErrorBoundary>
         </main>
       </div>
 

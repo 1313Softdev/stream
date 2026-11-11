@@ -75,6 +75,34 @@ const memoryFallback = {
   ]),
   slots: new Map<string, any>([
     [
+      'slot-1',
+      {
+        id: 'slot-1',
+        userId: '6ae0fd7c4863791bef736a0a',
+        name: '24/7 Punjabi News & Music Live',
+        status: 'active',
+        paymentStatus: 'approved',
+        streamStatus: 'Live',
+        platform: 'YouTube',
+        streamKey: 'e4uw-x7zb-5090-1ujz-9zek',
+        streamLoop: true,
+        autoStartOnKeyUpdate: true,
+        rtmpServerUrl: 'rtmp://a.rtmp.youtube.com/live2',
+        videoId: 'vid_default_lofi',
+        targetBitrateKbps: 2500,
+        fpsPreset: 30,
+        audioBitrateKbps: 128,
+        qualityPresetName: '720p',
+        startedAt: Date.now() - 7200000,
+        liveViewers: 142,
+        bitrate: 2480,
+        fps: 30,
+        expiresAt: Date.now() + 90 * 24 * 3600 * 1000,
+        expireOn: '08 Feb 2027 - 11:59 PM',
+        subscriptionPlanId: 'Quarterly',
+      },
+    ],
+    [
       'slot_demo_101',
       {
         id: 'slot_demo_101',
@@ -89,6 +117,7 @@ const memoryFallback = {
         autoStartOnKeyUpdate: true,
         expiresAt: Date.now() + 86400000,
         expireOn: 'Tomorrow - 11:59 PM',
+        subscriptionPlanId: 'Months',
       },
     ],
   ]),
@@ -708,6 +737,7 @@ export async function createUserWithPassword(user: {
     phone: user.phone || '',
     phoneCode: user.phoneCode || '+91',
     theme: user.theme || 'light',
+    createdAt: new Date().toISOString(),
   };
 
   memoryFallback.users.set(user.id, record);
@@ -897,6 +927,11 @@ export async function getSettings(): Promise<Record<string, string>> {
     google_drive_api_key: '',
     google_drive_service_account_json: '',
     default_payment_gateway: 'upi',
+    home_live_video_url: 'https://www.youtube.com/watch?v=7PIji8OubXU',
+    home_live_video_title: 'How To Setup Youtube 24x7 Livestream',
+    home_live_video_subtitle: 'Stream LIVE',
+    home_live_video_badge: 'LIVE 1.5K VIEWERS',
+    home_live_video_poster: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=1200&auto=format&fit=crop&q=80',
   };
 
   if (pool && isConnected) {
@@ -1022,24 +1057,44 @@ export async function updatePaymentGateway(id: string, updates: any): Promise<an
 function mapPlanRow(r: any) {
   let features: string[] = [];
   try {
-    features = typeof r.features_json === 'string' ? JSON.parse(r.features_json) : (r.features_json || []);
+    features = typeof r.features_json === 'string'
+      ? JSON.parse(r.features_json)
+      : (Array.isArray(r.features) ? r.features : (r.features_json || []));
   } catch {}
 
+  const durationDays = Number(r.duration_days ?? r.durationDays) || (
+    r.period === 'Days' ? 1 :
+    r.period === 'Weeks' ? 7 :
+    r.period === 'Months' ? 30 :
+    r.period === '3 Months' ? 90 :
+    r.period === 'Year' ? 365 : 30
+  );
+
+  let durationLabel = r.duration_label || r.durationLabel;
+  if (!durationLabel || (r.period === 'Days' && durationLabel.toLowerCase().includes('month'))) {
+    durationLabel = r.period === 'Days' ? (durationDays === 1 ? '1 Day' : `${durationDays} Days`) :
+                    r.period === 'Weeks' ? (durationDays === 7 ? '1 Week' : `${durationDays} Days`) :
+                    r.period === 'Months' ? (durationDays === 30 ? '1 Month' : `${durationDays} Days`) :
+                    r.period === '3 Months' ? (durationDays === 90 ? '3 Months' : `${durationDays} Days`) :
+                    r.period === 'Year' ? (durationDays === 365 ? '1 Year' : `${durationDays} Days`) :
+                    `${durationDays} Days`;
+  }
+
   return {
-    id: r.id,
+    id: String(r.id),
     title: r.title,
-    period: r.period,
-    durationLabel: r.duration_label,
-    durationDays: Number(r.duration_days) || 30,
-    priceINR: Number(r.price_inr) || 1999,
-    priceUSD: Number(r.price_usd) || 24.99,
-    storageGB: Number(r.storage_gb) || 10,
-    maxSlots: Number(r.max_slots) || 1,
+    period: r.period || 'Months',
+    durationLabel,
+    durationDays,
+    priceINR: Number(r.price_inr ?? r.priceINR) || 1999,
+    priceUSD: Number(r.price_usd ?? r.priceUSD) || 24.99,
+    storageGB: Number(r.storage_gb ?? r.storageGB) || 10,
+    maxSlots: Number(r.max_slots ?? r.maxSlots) || 1,
     features,
-    isActive: Boolean(r.is_active),
-    isPopular: Boolean(r.is_popular),
-    badgeText: r.badge_text || null,
-    displayOrder: Number(r.display_order) || 0,
+    isActive: r.is_active !== undefined ? Boolean(r.is_active) : (r.isActive !== undefined ? Boolean(r.isActive) : true),
+    isPopular: r.is_popular !== undefined ? Boolean(r.is_popular) : Boolean(r.isPopular),
+    badgeText: r.badge_text ?? r.badgeText ?? null,
+    displayOrder: Number(r.display_order ?? r.displayOrder) || 0,
   };
 }
 
@@ -1062,8 +1117,64 @@ export async function getSubscriptionPlans(onlyActive = false): Promise<any[]> {
 
 export async function saveSubscriptionPlan(plan: any): Promise<any> {
   const planId = plan.id || `plan_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-  const featuresJson = JSON.stringify(plan.features || []);
-  const record = { ...plan, id: planId, featuresJson };
+  const features = Array.isArray(plan.features) ? plan.features : [];
+  const featuresJson = JSON.stringify(features);
+
+  const durationDays = Number(plan.durationDays ?? plan.duration_days) || (
+    plan.period === 'Days' ? 1 :
+    plan.period === 'Weeks' ? 7 :
+    plan.period === 'Months' ? 30 :
+    plan.period === '3 Months' ? 90 :
+    plan.period === 'Year' ? 365 : 30
+  );
+
+  let durationLabel = plan.durationLabel || plan.duration_label;
+  if (!durationLabel || (plan.period === 'Days' && durationLabel.toLowerCase().includes('month'))) {
+    durationLabel = plan.period === 'Days' ? (durationDays === 1 ? '1 Day' : `${durationDays} Days`) :
+                    plan.period === 'Weeks' ? (durationDays === 7 ? '1 Week' : `${durationDays} Days`) :
+                    plan.period === 'Months' ? (durationDays === 30 ? '1 Month' : `${durationDays} Days`) :
+                    plan.period === '3 Months' ? (durationDays === 90 ? '3 Months' : `${durationDays} Days`) :
+                    plan.period === 'Year' ? (durationDays === 365 ? '1 Year' : `${durationDays} Days`) :
+                    `${durationDays} Days`;
+  }
+
+  const priceINR = Number(plan.priceINR ?? plan.price_inr ?? 1999);
+  const priceUSD = Number(plan.priceUSD ?? plan.price_usd ?? 24.99);
+  const storageGB = Number(plan.storageGB ?? plan.storage_gb ?? 10);
+  const maxSlots = Number(plan.maxSlots ?? plan.max_slots ?? 1);
+  const isActive = plan.isActive !== undefined ? (plan.isActive ? 1 : 0) : (plan.is_active !== undefined ? (plan.is_active ? 1 : 0) : 1);
+  const isPopular = plan.isPopular ? 1 : (plan.is_popular ? 1 : 0);
+  const badgeText = plan.badgeText ?? plan.badge_text ?? null;
+  const displayOrder = Number(plan.displayOrder ?? plan.display_order ?? 0);
+
+  const record = {
+    id: planId,
+    title: plan.title,
+    period: plan.period || 'Months',
+    durationLabel,
+    durationDays,
+    priceINR,
+    priceUSD,
+    storageGB,
+    maxSlots,
+    features,
+    features_json: featuresJson,
+    isActive: Boolean(isActive),
+    isPopular: Boolean(isPopular),
+    badgeText,
+    displayOrder,
+    duration_label: durationLabel,
+    duration_days: durationDays,
+    price_inr: priceINR,
+    price_usd: priceUSD,
+    storage_gb: storageGB,
+    max_slots: maxSlots,
+    is_active: isActive,
+    is_popular: isPopular,
+    badge_text: badgeText,
+    display_order: displayOrder,
+  };
+
   memoryFallback.subscriptionPlans.set(planId, record);
 
   if (pool && isConnected) {
@@ -1090,19 +1201,19 @@ export async function saveSubscriptionPlan(plan: any): Promise<any> {
           display_order = VALUES(display_order)`,
         [
           planId,
-          plan.title,
-          plan.period || 'Months',
-          plan.durationLabel || '1 Month',
-          plan.durationDays || 30,
-          plan.priceINR ?? plan.price_inr ?? 1999,
-          plan.priceUSD ?? plan.price_usd ?? 24.99,
-          plan.storageGB ?? plan.storage_gb ?? 10,
-          plan.maxSlots ?? plan.max_slots ?? 1,
+          record.title,
+          record.period,
+          record.durationLabel,
+          record.durationDays,
+          record.priceINR,
+          record.priceUSD,
+          record.storageGB,
+          record.maxSlots,
           featuresJson,
-          plan.isActive ?? true ? 1 : 0,
-          plan.isPopular ?? false ? 1 : 0,
-          plan.badgeText || null,
-          plan.displayOrder || 0,
+          isActive,
+          isPopular,
+          badgeText,
+          displayOrder,
         ]
       );
     } catch (err) {
@@ -1313,33 +1424,53 @@ export async function updatePaymentTransactionStatus(
         status: 'completed',
       });
 
-      // Calculate exact duration from the selected subscription plan
-      let daysToAdd = 30;
-      const lowerPlan = String(tx.planId || '').toLowerCase();
-      if (lowerPlan.includes('3 month') || lowerPlan.includes('quarter') || lowerPlan === 'quarterly') {
-        daysToAdd = 90;
-      } else if (lowerPlan.includes('month') || lowerPlan === 'months' || lowerPlan === 'monthly') {
-        daysToAdd = 30;
-      } else if (lowerPlan.includes('week') || lowerPlan === 'weeks' || lowerPlan === 'weekly') {
-        daysToAdd = 7;
-      } else if (lowerPlan.includes('day') || lowerPlan === 'days' || lowerPlan === 'daily' || lowerPlan === 'trial') {
-        daysToAdd = 1;
-      } else if (lowerPlan.includes('year') || lowerPlan.includes('annual')) {
-        daysToAdd = 365;
+      // Fetch dynamic subscription plans to determine exact durationDays
+      const plans = await getSubscriptionPlans();
+      const matchedPlan = plans.find((p: any) => p.id === tx.planId || p.period === tx.planId);
+      let daysToAdd = matchedPlan?.durationDays || 30;
+      if (!matchedPlan) {
+        const lowerPlan = String(tx.planId || '').toLowerCase();
+        if (lowerPlan.includes('3 month') || lowerPlan.includes('quarter') || lowerPlan === 'quarterly') {
+          daysToAdd = 90;
+        } else if (lowerPlan.includes('month') || lowerPlan === 'months' || lowerPlan === 'monthly') {
+          daysToAdd = 30;
+        } else if (lowerPlan.includes('week') || lowerPlan === 'weeks' || lowerPlan === 'weekly') {
+          daysToAdd = 7;
+        } else if (lowerPlan.includes('day') || lowerPlan === 'days' || lowerPlan === 'daily' || lowerPlan === 'trial') {
+          daysToAdd = 1;
+        } else if (lowerPlan.includes('year') || lowerPlan.includes('annual')) {
+          daysToAdd = 365;
+        }
       }
 
-      // Extend slot expiry or activate slot if slotId provided, or auto-activate user's pending slot
+      // Check target slot:
+      // If tx.slotId is provided: this is an existing slot renewal
       let targetSlot = tx.slotId ? await getSlot(tx.slotId) : null;
+      const userSlots = tx.userId ? await getSlots(tx.userId) : [];
+
       if (!targetSlot && tx.userId) {
-        const userSlots = await getSlots(tx.userId);
-        targetSlot = userSlots.find((s: any) => s.status === 'pending_approval') || userSlots[0] || null;
+        // If there is an existing pending_approval slot for this user, activate that
+        targetSlot = userSlots.find((s: any) => s.status === 'pending_approval') || null;
       }
+
+function formatSlotExpirationDate(timestamp: number): string {
+  const d = new Date(timestamp);
+  const day = d.getDate();
+  const month = d.toLocaleString('en-US', { month: 'short' });
+  const year = d.getFullYear();
+  let hours = d.getHours();
+  const minutes = d.getMinutes().toString().padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  const hourStr = hours.toString().padStart(2, '0');
+  return `${day} ${month} ${year} - ${hourStr}:${minutes} ${ampm}`;
+}
 
       if (targetSlot) {
+        // Renew / Activate existing slot
         const currentExp = targetSlot.expiresAt && targetSlot.expiresAt > Date.now() ? targetSlot.expiresAt : Date.now();
         const newExp = currentExp + daysToAdd * 24 * 3600 * 1000;
-        const d = new Date(newExp);
-        const expireOnStr = `${d.getDate()} ${d.toLocaleString('default', { month: 'short' })} ${d.getFullYear()} - 11:59 PM`;
+        const expireOnStr = formatSlotExpirationDate(newExp);
         await upsertSlot({
           ...targetSlot,
           status: 'active',
@@ -1348,16 +1479,30 @@ export async function updatePaymentTransactionStatus(
           expireOn: expireOnStr,
         });
         tx.slotId = targetSlot.id;
+        if (pool && isConnected) {
+          await pool.query('UPDATE payment_transactions SET slot_id = ? WHERE id = ?', [targetSlot.id, id]);
+        }
       } else if (tx.userId) {
-        // If user has no slot yet, auto-create an active slot for them to use immediately!
+        // Brand new slot creation! User paid for a new slot without having a premature slot added before.
+        // Now that admin confirmed payment, create the usable active slot as per plan payment!
+        const nextSlotIndex = userSlots.length + 1;
+        let slotName = `Live Slot ${nextSlotIndex}`;
+
+        if (tx.adminNote && tx.adminNote.includes('Requested Slot:')) {
+          const extracted = tx.adminNote.split('Requested Slot:')[1]?.trim();
+          if (extracted) slotName = extracted;
+        } else if (tx.notes && String(tx.notes).trim()) {
+          slotName = String(tx.notes).trim();
+        }
+
         const nowMs = Date.now();
         const expMs = nowMs + daysToAdd * 24 * 3600 * 1000;
-        const d = new Date(expMs);
-        const expireOnStr = `${d.getDate()} ${d.toLocaleString('default', { month: 'short' })} ${d.getFullYear()} - 11:59 PM`;
+        const expireOnStr = formatSlotExpirationDate(expMs);
+
         const newSlot = {
-          id: `slot_${tx.userId.slice(-6)}_${Date.now().toString().slice(-4)}`,
+          id: `slot_${tx.userId ? tx.userId.slice(-6) : 'user'}_${Date.now().toString().slice(-4)}`,
           userId: tx.userId,
-          name: `Live Slot 1`,
+          name: slotName,
           status: 'active',
           paymentStatus: 'approved',
           streamStatus: 'Off',
@@ -1366,9 +1511,13 @@ export async function updatePaymentTransactionStatus(
           streamLoop: true,
           expiresAt: expMs,
           expireOn: expireOnStr,
+          subscriptionPlanId: matchedPlan?.id || tx.planId || 'Months',
         };
         await upsertSlot(newSlot);
         tx.slotId = newSlot.id;
+        if (pool && isConnected) {
+          await pool.query('UPDATE payment_transactions SET slot_id = ? WHERE id = ?', [newSlot.id, id]);
+        }
       }
     } catch (provisionErr) {
       console.error('[MySQL] Provisioning on approval error:', provisionErr);
@@ -1380,28 +1529,36 @@ export async function updatePaymentTransactionStatus(
 
 // ---------------- SLOT OPERATIONS ----------------
 function mapSlotRow(r: any) {
+  let expiresAt = r.expires_at ? Number(r.expires_at) : undefined;
+  if (!expiresAt && r.expire_on) {
+    const parsed = Date.parse(String(r.expire_on).replace('-', ' '));
+    if (!isNaN(parsed) && parsed > 0) {
+      expiresAt = parsed;
+    }
+  }
+
   return {
-    id: r.id,
-    userId: r.user_id || undefined,
-    name: r.name,
-    status: r.status,
-    streamStatus: r.stream_status,
-    expireOn: r.expire_on,
-    expiresAt: r.expires_at ? Number(r.expires_at) : undefined,
-    streamKey: r.stream_key,
-    platform: r.platform,
+    id: String(r.id),
+    userId: r.user_id ? String(r.user_id) : undefined,
+    name: r.name || `Slot ${r.id}`,
+    status: r.status || 'active',
+    streamStatus: r.stream_status || 'Off',
+    expireOn: r.expire_on || '',
+    expiresAt,
+    streamKey: r.stream_key || '',
+    platform: r.platform || 'YouTube',
     streamLoop: Boolean(r.stream_loop),
     autoStartOnKeyUpdate: Boolean(r.auto_start_on_key_update),
-    rtmpServerUrl: r.rtmp_server_url,
+    rtmpServerUrl: r.rtmp_server_url || '',
     scheduleStartEnabled: Boolean(r.schedule_start_enabled),
-    streamStartTime: r.stream_start_time,
+    streamStartTime: r.stream_start_time || 'October 30th, 2026 06:00 PM',
     scheduledStartTimeMs: r.scheduled_start_time_ms ? Number(r.scheduled_start_time_ms) : undefined,
-    streamEndTime: r.stream_end_time,
-    videoId: r.video_id,
-    targetBitrateKbps: r.target_bitrate_kbps ? Number(r.target_bitrate_kbps) : undefined,
-    fpsPreset: r.fps_preset ? Number(r.fps_preset) : undefined,
-    audioBitrateKbps: r.audio_bitrate_kbps ? Number(r.audio_bitrate_kbps) : undefined,
-    qualityPresetName: r.quality_preset_name,
+    streamEndTime: r.stream_end_time || '',
+    videoId: r.video_id || undefined,
+    targetBitrateKbps: r.target_bitrate_kbps ? Number(r.target_bitrate_kbps) : 2500,
+    fpsPreset: r.fps_preset ? Number(r.fps_preset) : 30,
+    audioBitrateKbps: r.audio_bitrate_kbps ? Number(r.audio_bitrate_kbps) : 128,
+    qualityPresetName: r.quality_preset_name || '1080p',
     startedAt: r.started_at ? Number(r.started_at) : undefined,
     liveViewers: r.live_viewers ? Number(r.live_viewers) : 0,
     bitrate: r.bitrate ? Number(r.bitrate) : 0,
@@ -1412,7 +1569,7 @@ function mapSlotRow(r: any) {
 export async function getSlots(userId?: string) {
   if (pool && isConnected) {
     try {
-      if (userId) {
+      if (userId && userId !== 'all') {
         const [rows] = await pool.query<mysql.RowDataPacket[]>(
           'SELECT * FROM slots WHERE user_id = ? ORDER BY created_at ASC',
           [userId]
@@ -1427,7 +1584,7 @@ export async function getSlots(userId?: string) {
     }
   }
   const all = Array.from(memoryFallback.slots.values());
-  return userId ? all.filter((s: any) => s.userId === userId) : all;
+  return (userId && userId !== 'all') ? all.filter((s: any) => s.userId === userId) : all;
 }
 
 export async function getSlot(id: string) {

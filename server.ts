@@ -616,13 +616,22 @@ app.post('/api/stream/stop', (req, res) => {
   return res.json({ success: true, message: 'Stream stopped successfully' });
 });
 
-// Background Watchdog: Auto-detect slot expiration and terminate active live streams immediately
+// Background Watchdog: Auto-detect slot expiration, terminate active live streams immediately,
+// and auto-delete expired slots after 15 days if not used/renewed by user.
+const FIFTEEN_DAYS_MS = 15 * 24 * 60 * 60 * 1000;
+
 setInterval(async () => {
   try {
     const allSlots = await getSlots();
     const now = Date.now();
     for (const slot of allSlots) {
-      const isExpired = Boolean(slot.expiresAt) && slot.expiresAt > 0 && slot.expiresAt <= now;
+      let expiresAtMs = slot.expiresAt && slot.expiresAt > 0 ? slot.expiresAt : 0;
+      if (!expiresAtMs && slot.expireOn) {
+        const parsed = Date.parse(slot.expireOn.replace('-', ' '));
+        if (!isNaN(parsed) && parsed > 0) expiresAtMs = parsed;
+      }
+
+      const isExpired = slot.status === 'expired' || (expiresAtMs > 0 && expiresAtMs <= now);
       if (isExpired) {
         // If an active stream process is running for this slot, terminate it immediately
         const session = activeStreams.get(slot.id);
@@ -635,14 +644,25 @@ setInterval(async () => {
           activeStreams.delete(slot.id);
         }
 
+        // Auto-delete expired slot after 15 days if not renewed / used by user
+        if (expiresAtMs > 0 && (now - expiresAtMs >= FIFTEEN_DAYS_MS)) {
+          console.log(`[Watchdog] Slot ${slot.id} ("${slot.name}") expired over 15 days ago (${new Date(expiresAtMs).toISOString()}). Auto-deleting.`);
+          await deleteSlot(slot.id).catch((e) => console.error('[Watchdog] Failed to auto-delete slot:', e));
+          continue;
+        }
+
         // Update database record if not already marked expired or if streamStatus is still Live
         if (slot.status !== 'expired' || slot.streamStatus === 'Live') {
           slot.status = 'expired';
           slot.streamStatus = 'Off';
+          if (expiresAtMs && !slot.expiresAt) {
+            slot.expiresAt = expiresAtMs;
+          }
           await upsertSlot({
             ...slot,
             status: 'expired',
             streamStatus: 'Off',
+            expiresAt: expiresAtMs || slot.expiresAt,
           }).catch(() => {});
         }
       }
@@ -1047,11 +1067,26 @@ app.put('/api/user', async (req, res) => {
 app.get('/api/slots', async (req, res) => {
   try {
     const authUser = getAuthUser(req);
-    const userId = (req.query.userId as string) || authUser?.id;
-    if (!userId) {
-      return res.json({ success: true, slots: [] });
+    const isAdmin = authUser?.role === 'admin';
+    const reqUserId = req.query.userId as string | undefined;
+
+    let slots: any[] = [];
+    if (isAdmin) {
+      if (req.query.scope === 'mine') {
+        slots = await getSlots(authUser.id);
+      } else if (reqUserId && reqUserId !== authUser.id && req.query.all !== 'true') {
+        slots = await getSlots(reqUserId);
+      } else {
+        // By default, Admin has platform-wide visibility of all live slots
+        slots = await getSlots();
+      }
+    } else {
+      const userId = reqUserId || authUser?.id;
+      if (!userId) {
+        return res.json({ success: true, slots: [] });
+      }
+      slots = await getSlots(userId);
     }
-    const slots = await getSlots(userId);
     res.json({ success: true, slots });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err?.message || 'Failed to get slots' });
@@ -1099,8 +1134,17 @@ app.put('/api/slots/:id', async (req, res) => {
 
 app.delete('/api/slots/:id', async (req, res) => {
   try {
-    await deleteSlot(req.params.id);
-    res.json({ success: true, id: req.params.id });
+    const slotId = req.params.id;
+    const session = activeStreams.get(slotId);
+    if (session) {
+      try {
+        session.process.kill('SIGTERM');
+      } catch {}
+      session.status = 'stopped';
+      activeStreams.delete(slotId);
+    }
+    await deleteSlot(slotId);
+    res.json({ success: true, id: slotId });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err?.message || 'Failed to delete slot' });
   }
@@ -1416,7 +1460,7 @@ app.post('/api/payments/upload-proof', (req, res) => {
 
 app.post('/api/payments/submit-utr', async (req, res) => {
   try {
-    let { userId, userName, userEmail, planId, slotId, amount, currency, gatewayType, utrNumber, proofImageUrl } = req.body;
+    let { userId, userName, userEmail, planId, slotId, amount, currency, gatewayType, utrNumber, proofImageUrl, notes } = req.body;
 
     if (!userId || !planId || !amount) {
       return res.status(400).json({ success: false, error: 'userId, planId, and amount are required' });
@@ -1439,6 +1483,10 @@ app.post('/api/payments/submit-utr', async (req, res) => {
     const gateway = gateways.find((g) => g.id === gatewayType);
     const autoVerify = Boolean(gateway?.autoVerify);
 
+    const initialAdminNote = notes
+      ? `Requested Slot: ${notes}`
+      : (autoVerify ? 'Automatically verified by Gateway rules' : null);
+
     const tx = await createPaymentTransaction({
       userId,
       userName: userName || 'Registered Creator',
@@ -1451,7 +1499,8 @@ app.post('/api/payments/submit-utr', async (req, res) => {
       utrNumber: utrNumber.trim(),
       proofImageUrl,
       status: autoVerify ? 'approved' : 'pending',
-      adminNote: autoVerify ? 'Automatically verified by Gateway rules' : null,
+      adminNote: initialAdminNote,
+      notes: notes || undefined,
     });
 
     if (autoVerify) {
@@ -1467,6 +1516,20 @@ app.post('/api/payments/submit-utr', async (req, res) => {
     });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err?.message || 'Failed to submit UTR' });
+  }
+});
+
+app.get('/api/payments/user-transactions', async (req, res) => {
+  try {
+    const userId = req.query.userId as string;
+    if (!userId) {
+      return res.json({ success: true, transactions: [] });
+    }
+    const all = await getAllPaymentTransactions();
+    const userTx = all.filter((t: any) => String(t.userId).trim() === String(userId).trim());
+    res.json({ success: true, transactions: userTx });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Failed to get user transactions' });
   }
 });
 

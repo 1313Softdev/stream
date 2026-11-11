@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ChevronDown,
   Plus,
@@ -21,7 +21,7 @@ import {
   Lock,
   XCircle,
 } from 'lucide-react';
-import { Slot, VideoItem, StreamingPlatform, BillingPeriod, UserProfile } from '../types';
+import { Slot, VideoItem, StreamingPlatform, BillingPeriod, UserProfile, SubscriptionPlanItem } from '../types';
 import { BILLING_PLANS } from '../config/billingPlans';
 import { PaymentModal } from './PaymentModal';
 import { AppView } from './Sidebar';
@@ -30,6 +30,7 @@ interface LiveSlotsViewProps {
   slots: Slot[];
   videos?: VideoItem[];
   user?: UserProfile;
+  plans?: SubscriptionPlanItem[];
   onSelectSlot: (slot: Slot) => void;
   onNavigate: (view: AppView) => void;
   onToggleStream: (slotId: string, overrides?: Partial<Slot>) => void;
@@ -52,6 +53,7 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
   slots,
   videos = [],
   user,
+  plans,
   onSelectSlot,
   onNavigate,
   onToggleStream,
@@ -70,6 +72,7 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
   const [newStreamKey, setNewStreamKey] = useState<string>('');
   const [newVideoId, setNewVideoId] = useState<string>(videos[0]?.id || '');
   const [selectedPlanPeriod, setSelectedPlanPeriod] = useState<BillingPeriod>(initialPlanPeriod || 'Months');
+  const [selectedPlanId, setSelectedPlanId] = useState<string>('');
   const [scheduleNewSlot, setScheduleNewSlot] = useState<boolean>(false);
   const [newSlotStartTime, setNewSlotStartTime] = useState<string>('October 30th, 2026 06:00 PM');
 
@@ -86,11 +89,24 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
   const [paymentSlotId, setPaymentSlotId] = useState<string | undefined>(undefined);
   const [paymentSlotName, setPaymentSlotName] = useState<string>('');
 
-  const currentPlan = BILLING_PLANS[selectedPlanPeriod] || BILLING_PLANS['Months'];
-  const activePaymentPlan = BILLING_PLANS[paymentPlanPeriod] || BILLING_PLANS['Months'];
+  const activePlans: SubscriptionPlanItem[] = (plans && plans.length > 0)
+    ? plans.filter((p) => p.isActive)
+    : [
+        { id: 'plan_days', title: 'Daily Trial / Event', period: 'Days', durationLabel: '1 Day', durationDays: 1, priceINR: 99, priceUSD: 1.5, storageGB: 1, maxSlots: 1, features: ['24 Hours continuous live streaming', '1GB Dedicated video storage', 'Unlimited loops with zero buffering', '1080p 60fps broadcast quality'], isActive: true, isPopular: false, displayOrder: 1 },
+        { id: 'plan_weeks', title: 'Weekly Boost', period: 'Weeks', durationLabel: '1 Week', durationDays: 7, priceINR: 299, priceUSD: 4, storageGB: 3, maxSlots: 1, features: ['7 Days continuous live streaming', '3GB Dedicated video storage', 'Unlimited loops with zero buffering', '1080p 60fps broadcast quality'], isActive: true, isPopular: false, displayOrder: 2 },
+        { id: 'plan_months', title: 'Monthly Standard', period: 'Months', durationLabel: '1 Month', durationDays: 30, priceINR: 799, priceUSD: 10, storageGB: 20, maxSlots: 1, features: ['30 Days continuous live streaming', '20GB Dedicated video storage', 'Unlimited loops with zero buffering', '1080p 60fps broadcast quality', 'Multi-slot management'], isActive: true, isPopular: false, displayOrder: 3 },
+        { id: 'plan_3months', title: 'Quarterly Supercharged', period: '3 Months', durationLabel: '3 Months', durationDays: 90, priceINR: 1999, priceUSD: 24, storageGB: 50, maxSlots: 1, features: ['90 Days continuous live streaming', '50GB Dedicated video storage', 'Unlimited loops with zero buffering', '1080p 60fps broadcast quality', 'Best Value · Save 30%', '24/7 Dedicated Server Support'], isActive: true, isPopular: true, displayOrder: 4 },
+      ];
+
+  const currentPlan = (selectedPlanId && activePlans.find((p) => p.id === selectedPlanId)) ||
+                      activePlans.find((p) => p.period === selectedPlanPeriod) ||
+                      activePlans[0];
+  const activePaymentPlan = activePlans.find((p) => p.id === paymentPlanPeriod || p.period === paymentPlanPeriod) || activePlans[0];
 
   const filteredSlots = slots.filter((slot) => {
     if (filter === 'All Slots') return true;
+    if (filter === 'My Master Slots') return slot.userId === user?.id;
+    if (filter === 'User Live Slots') return slot.userId !== user?.id;
     if (filter === 'Active') return slot.status === 'active';
     if (filter === 'Expired') return slot.status === 'expired';
     if (filter === 'Pending Approval') return slot.status === 'pending_approval';
@@ -108,6 +124,18 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
     }
   };
 
+  const getTimeRemaining = (expiresAt?: number): string | null => {
+    if (!expiresAt || expiresAt <= Date.now()) return null;
+    const diffMs = expiresAt - Date.now();
+    const totalMins = Math.floor(diffMs / (60 * 1000));
+    const days = Math.floor(totalMins / (24 * 60));
+    const hours = Math.floor((totalMins % (24 * 60)) / 60);
+    const mins = totalMins % 60;
+    if (days > 0) return `${days}d ${hours}h left`;
+    if (hours > 0) return `${hours}h ${mins}m left`;
+    return `${mins}m left`;
+  };
+
   const handleSelectRow = (id: string) => {
     if (selectedIds.includes(id)) {
       setSelectedIds(selectedIds.filter((item) => item !== id));
@@ -122,28 +150,28 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
 
     const isUserAdmin = user?.role === 'admin';
 
-    // Create the slot (if not admin, it will have status: 'pending_approval')
-    const createdSlot = onAddSlot(
-      newSlotName.trim(),
-      scheduleNewSlot,
-      newSlotStartTime,
-      newStreamKey.trim(),
-      newVideoId || videos[0]?.id,
-      newPlatform,
-      selectedPlanPeriod,
-      !isUserAdmin // require approval if not admin
-    );
-
-    setShowAddModal(false);
-
     if (isUserAdmin) {
+      // Admin can create and activate slots directly without payment
+      onAddSlot(
+        newSlotName.trim(),
+        scheduleNewSlot,
+        newSlotStartTime,
+        newStreamKey.trim(),
+        newVideoId || videos[0]?.id,
+        newPlatform,
+        currentPlan.id || selectedPlanPeriod,
+        false
+      );
+      setShowAddModal(false);
       setToastMessage(`Admin created and activated slot "${newSlotName.trim()}".`);
-      setTimeout(() => setToastMessage(null), 3000);
+      setTimeout(() => setToastMessage(null), 3500);
     } else {
-      // Open Payment Modal immediately so user can pay & submit UTR
-      setPaymentSlotId(createdSlot.id);
-      setPaymentSlotName(createdSlot.name);
-      setPaymentPlanPeriod(selectedPlanPeriod);
+      // Non-admin user: WITHOUT SUBSCRIPTION PAYMENT DO NOT ADD ANY SLOT!
+      // Close modal and proceed directly to payment checkout
+      setShowAddModal(false);
+      setPaymentSlotId(undefined); // undefined means new slot creation upon admin verification
+      setPaymentSlotName(newSlotName.trim());
+      setPaymentPlanPeriod(currentPlan.period);
       setIsPaymentModalOpen(true);
     }
 
@@ -164,10 +192,13 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
     setIsPaymentModalOpen(false);
     if (paymentSlotId && onRenewSlot) {
       onRenewSlot(paymentSlotId, paymentPlanPeriod, 1, utr);
+      setToastMessage(`Renewal payment submitted with UTR ${utr}! Once confirmed by admin, your slot validity will be extended.`);
+    } else {
+      setToastMessage(`Subscription payment submitted with UTR ${utr}! Once confirmed by admin, your usable live slot will be created automatically.`);
     }
-    setToastMessage(`Payment reference (${utr}) submitted! Admin will verify and activate your slot shortly.`);
-    setTimeout(() => setToastMessage(null), 5000);
+    setTimeout(() => setToastMessage(null), 6000);
     setPaymentSlotId(undefined);
+    setPaymentSlotName('');
   };
 
   const handleConfirmDeleteSlot = () => {
@@ -203,6 +234,32 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
         </div>
       </div>
 
+      {/* Admin Master Banner */}
+      {user?.role === 'admin' && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-gradient-to-r from-purple-50 via-indigo-50/50 to-white dark:from-purple-950/40 dark:via-indigo-950/20 dark:to-slate-900 border border-purple-200 dark:border-purple-800/60 shadow-xs">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-[#6320ee] text-white flex items-center justify-center shrink-0 shadow-xs">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <span>Admin Master Slot Control</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase bg-purple-600 text-white">Full Access</span>
+              </h4>
+              <p className="text-xs text-slate-600 dark:text-slate-300">
+                You have master privileges to monitor, start, stop, or configure any live streaming slot across all platform users.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => onNavigate('admin')}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold text-purple-700 dark:text-purple-300 bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-800 hover:bg-purple-50 dark:hover:bg-purple-900/30 transition-colors shrink-0 cursor-pointer"
+          >
+            Admin Control Center &rarr;
+          </button>
+        </div>
+      )}
+
       {/* Heading & Subtitle matching Screenshot 6 */}
       <div className="flex flex-col gap-1">
         <h3 className="text-2xl font-bold text-slate-900 dark:text-white">
@@ -216,16 +273,22 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
       {/* Controls Bar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
         {/* Filter Dropdown */}
-        <div className="relative inline-block w-52">
+        <div className="relative inline-block w-64">
           <select
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             className="w-full appearance-none bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 text-sm font-medium py-2.5 px-3.5 pr-8 rounded-lg shadow-2xs focus:outline-hidden focus:ring-2 focus:ring-[#6320ee] cursor-pointer"
           >
-            <option value="All Slots">All Slots</option>
-            <option value="Active">Active</option>
-            <option value="Pending Approval">Pending Approval</option>
-            <option value="Live Streams">Live Streams (Streaming)</option>
+            <option value="All Slots">All Slots ({slots.length})</option>
+            {user?.role === 'admin' && (
+              <>
+                <option value="My Master Slots">★ My Master Slots ({slots.filter((s) => s.userId === user?.id).length})</option>
+                <option value="User Live Slots">User Live Slots ({slots.filter((s) => s.userId !== user?.id).length})</option>
+              </>
+            )}
+            <option value="Active">Active ({slots.filter((s) => s.status === 'active').length})</option>
+            <option value="Pending Approval">Pending Approval ({slots.filter((s) => s.status === 'pending_approval').length})</option>
+            <option value="Live Streams">Live Streams ({slots.filter((s) => s.streamStatus === 'Live').length})</option>
             <option value="Scheduled Streams">Scheduled Streams</option>
             <option value="Expired">Expired</option>
             <option value="Inactive">Inactive</option>
@@ -292,10 +355,12 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
                   return (
                     <tr
                       key={slot.id}
-                      className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors group"
+                      onClick={() => onSelectSlot(slot)}
+                      className="hover:bg-purple-50/30 dark:hover:bg-slate-800/50 transition-colors group cursor-pointer"
+                      title="Click anywhere on row to open Live Slot Studio"
                     >
                       {/* Checkbox */}
-                      <td className="py-4 px-5 text-center">
+                      <td className="py-4 px-5 text-center" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={isChecked}
@@ -307,13 +372,35 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
                       {/* Slot Name */}
                       <td className="py-4 px-6">
                         <button
-                          onClick={() => onSelectSlot(slot)}
-                          className="font-semibold text-slate-900 dark:text-white hover:text-[#6320ee] dark:hover:text-[#a855f7] cursor-pointer transition-colors text-left flex items-center gap-1.5"
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectSlot(slot);
+                          }}
+                          className="font-bold text-slate-900 dark:text-white group-hover:text-[#6320ee] dark:group-hover:text-[#a855f7] cursor-pointer transition-colors text-left flex items-center gap-1.5"
                         >
                           <span>{slot.name}</span>
                         </button>
-                        <div className="text-xs text-slate-400 font-mono">
-                          ID: {slot.id.substring(0, 10)}...
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectSlot(slot);
+                            }}
+                            className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-mono cursor-pointer"
+                          >
+                            ID: {slot.id}
+                          </button>
+                          {user?.role === 'admin' && slot.userId && (
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                              slot.userId === user?.id
+                                ? 'bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                            }`}>
+                              {slot.userId === user?.id ? '★ Admin Slot' : `User: ${slot.userId.slice(-6)}`}
+                            </span>
+                          )}
                         </div>
                       </td>
 
@@ -364,10 +451,17 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
                             <span>Pending Payment</span>
                           </span>
                         ) : isExpired ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 font-semibold text-xs">
-                            <XCircle className="w-3 h-3" />
-                            <span>Expired</span>
-                          </span>
+                          <div className="flex flex-col gap-1 items-start">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 font-semibold text-xs">
+                              <XCircle className="w-3 h-3" />
+                              <span>Expired</span>
+                            </span>
+                            {slot.expiresAt ? (
+                              <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 font-medium">
+                                Auto-delete in {Math.max(1, 15 - Math.floor((Date.now() - slot.expiresAt) / (24 * 3600 * 1000)))}d
+                              </span>
+                            ) : null}
+                          </div>
                         ) : isStreaming ? (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400 font-bold text-xs">
                             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -389,16 +483,45 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
                       <td className="py-4 px-6 text-slate-600 dark:text-slate-400 text-xs tabular-nums">
                         {isPendingApproval ? (
                           <span className="text-amber-600 dark:text-amber-400 font-medium">Pending Approval</span>
+                        ) : isExpired ? (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="line-through text-red-500/80 dark:text-red-400/80">{slot.expireOn || 'Expired'}</span>
+                            {slot.expiresAt ? (
+                              <span className="text-[10px] text-slate-400 dark:text-slate-500 font-sans">
+                                Purge: in {Math.max(1, 15 - Math.floor((Date.now() - slot.expiresAt) / (24 * 3600 * 1000)))} day{Math.max(1, 15 - Math.floor((Date.now() - slot.expiresAt) / (24 * 3600 * 1000))) === 1 ? '' : 's'}
+                              </span>
+                            ) : null}
+                          </div>
                         ) : (
-                          slot.expireOn
+                          <div className="flex flex-col gap-0.5">
+                            <span>{slot.expireOn}</span>
+                            {getTimeRemaining(slot.expiresAt) && (
+                              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                <span>{getTimeRemaining(slot.expiresAt)}</span>
+                              </span>
+                            )}
+                          </div>
                         )}
                       </td>
 
                       {/* Action */}
-                      <td className="py-4 px-6 text-right">
+                      <td className="py-4 px-6 text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-2">
+                          {/* Direct Live Slot Studio Button */}
+                          <button
+                            type="button"
+                            onClick={() => onSelectSlot(slot)}
+                            className="px-2.5 py-1.5 rounded-lg bg-purple-50 hover:bg-[#6320ee] hover:text-white dark:bg-purple-950/60 dark:hover:bg-[#6320ee] text-[#6320ee] dark:text-[#a855f7] text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
+                            title="Open slot in Live Studio"
+                          >
+                            <Radio className="w-3.5 h-3.5" />
+                            <span>Studio</span>
+                          </button>
+
                           {isPendingApproval ? (
                             <button
+                              type="button"
                               onClick={() => handleOpenPayment(slot)}
                               className="px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
                               title="Submit or View Payment UTR for this slot"
@@ -408,6 +531,7 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
                             </button>
                           ) : isExpired ? (
                             <button
+                              type="button"
                               onClick={() => handleOpenPayment(slot)}
                               className="px-2.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
                               title="Renew subscription for this slot"
@@ -419,6 +543,7 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
                             <>
                               {/* Quick Stream toggle */}
                               <button
+                                type="button"
                                 onClick={() => {
                                   if (!slot.streamKey?.trim() && !isStreaming) {
                                     onSelectSlot(slot);
@@ -446,6 +571,7 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
 
                               {/* Renew Button */}
                               <button
+                                type="button"
                                 onClick={() => handleOpenPayment(slot)}
                                 className="p-2 text-slate-500 hover:text-[#6320ee] dark:hover:text-[#a855f7] rounded-lg hover:bg-purple-50 dark:hover:bg-purple-950/40 transition-colors cursor-pointer"
                                 title="Renew or Extend Subscription"
@@ -455,17 +581,9 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
                             </>
                           )}
 
-                          {/* View details */}
-                          <button
-                            onClick={() => onSelectSlot(slot)}
-                            className="p-2 text-slate-500 hover:text-slate-900 dark:hover:text-white rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                            title="View / Edit Slot Details"
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
-
                           {/* Delete */}
                           <button
+                            type="button"
                             onClick={() => setSlotToDelete(slot)}
                             className="p-2 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
                             title="Delete Slot"
@@ -629,22 +747,16 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
                   Select Subscription Plan Duration*
                 </label>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {(['Days', 'Weeks', 'Months', '3 Months'] as BillingPeriod[]).map((periodKey) => {
-                    const plan = BILLING_PLANS[periodKey];
-                    const isSelected = selectedPlanPeriod === periodKey;
-                    const durationDisplay =
-                      periodKey === 'Days'
-                        ? '1 Day'
-                        : periodKey === 'Weeks'
-                        ? '7 Days'
-                        : periodKey === 'Months'
-                        ? '30 Days'
-                        : '90 Days';
+                  {activePlans.map((plan) => {
+                    const isSelected = currentPlan.id === plan.id;
                     return (
                       <button
-                        key={periodKey}
+                        key={plan.id}
                         type="button"
-                        onClick={() => setSelectedPlanPeriod(periodKey)}
+                        onClick={() => {
+                          setSelectedPlanId(plan.id);
+                          setSelectedPlanPeriod(plan.period);
+                        }}
                         className={`p-2.5 rounded-xl border text-left flex flex-col gap-0.5 transition-all cursor-pointer ${
                           isSelected
                             ? 'border-[#6320ee] bg-purple-50/80 dark:bg-purple-950/40 ring-2 ring-[#6320ee]/30'
@@ -652,12 +764,12 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
                         }`}
                       >
                         <span className="text-[11px] font-bold text-slate-900 dark:text-white">
-                          {durationDisplay}
+                          {plan.durationLabel || `${plan.durationDays} Days`}
                         </span>
                         <span className="text-xs font-extrabold text-[#6320ee] dark:text-[#a855f7]">
                           ₹{plan.priceINR}
                         </span>
-                        <span className="text-[10px] text-slate-400">
+                        <span className="text-[10px] text-slate-400 truncate">
                           {plan.title.replace('Plan', '').trim()}
                         </span>
                       </button>
@@ -676,11 +788,36 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
                 </div>
               )}
 
-              <div className="p-3.5 rounded-xl bg-purple-50 dark:bg-purple-950/30 border border-purple-100 dark:border-purple-900/50 text-xs text-[#6320ee] dark:text-[#a855f7] flex flex-col gap-1">
-                <span className="font-semibold">Included in this slot:</span>
-                <span>• 24/7 Automated stream server</span>
-                <span>• Unlimited loops with zero buffering</span>
-                <span>• 4GB Dedicated video storage</span>
+              <div className="p-3.5 rounded-xl bg-purple-50 dark:bg-purple-950/30 border border-purple-100 dark:border-purple-900/50 text-xs text-[#6320ee] dark:text-[#a855f7] flex flex-col gap-1.5">
+                <div className="flex items-center justify-between font-bold">
+                  <span>Included in this {currentPlan.durationLabel || `${currentPlan.durationDays} Days`} slot:</span>
+                  <span className="text-xs font-extrabold text-[#6320ee] dark:text-[#a855f7]">₹{currentPlan.priceINR}</span>
+                </div>
+                <div className="flex flex-col gap-1 text-[11px] text-slate-700 dark:text-slate-300 mt-0.5">
+                  {currentPlan.features && currentPlan.features.length > 0 ? (
+                    currentPlan.features.map((feat, idx) => (
+                      <span key={idx} className="flex items-center gap-1.5">
+                        <span className="text-emerald-500 font-bold">✓</span>
+                        <span>{feat}</span>
+                      </span>
+                    ))
+                  ) : (
+                    <>
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-emerald-500 font-bold">✓</span>
+                        <span>24/7 Automated stream server ({currentPlan.durationLabel || `${currentPlan.durationDays} Days`})</span>
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-emerald-500 font-bold">✓</span>
+                        <span>Unlimited loops with zero buffering</span>
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-emerald-500 font-bold">✓</span>
+                        <span>{currentPlan.storageGB || 4}GB Dedicated cloud video storage</span>
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
             </form>
 
@@ -778,10 +915,12 @@ export const LiveSlotsView: React.FC<LiveSlotsViewProps> = ({
           onClose={() => {
             setIsPaymentModalOpen(false);
             setPaymentSlotId(undefined);
+            setPaymentSlotName('');
           }}
-          planTitle={`${activePaymentPlan.title} (${paymentSlotName || 'Slot Subscription'})`}
-          planId={paymentPlanPeriod}
+          planTitle={`${activePaymentPlan.title} (${activePaymentPlan.durationLabel || activePaymentPlan.period})${paymentSlotName ? ` - ${paymentSlotName}` : ''}`}
+          planId={activePaymentPlan.id || paymentPlanPeriod}
           slotId={paymentSlotId}
+          slotName={paymentSlotName}
           amount={activePaymentPlan.priceINR}
           currency="INR"
           user={user}
