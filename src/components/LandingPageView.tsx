@@ -85,7 +85,12 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
   const videoSubtitle = settings?.home_live_video_subtitle || 'Stream LIVE';
   const liveBadgeText = settings?.home_live_video_badge || 'LIVE 1.5K VIEWERS';
   const youtubeId = getYouTubeVideoId(videoUrl);
-  const posterUrl = settings?.home_live_video_poster || '/assets/home-live-mockup.jpg';
+  const customPoster = settings?.home_live_video_poster?.trim();
+  const posterUrl = customPoster
+    ? customPoster
+    : youtubeId
+    ? `https://i.ytimg.com/vi/${youtubeId}/maxresdefault.jpg`
+    : '/assets/home-live-mockup.jpg';
 
   const handleScrollTo = (e: React.MouseEvent, id: string) => {
     e.preventDefault();
@@ -593,7 +598,10 @@ export const LandingPageView: React.FC<LandingPageViewProps> = ({
                       alt={videoTitle}
                       className="w-full h-full object-cover select-none"
                       onError={(e) => {
-                        if (!e.currentTarget.src.includes('home-live-mockup.jpg')) {
+                        const src = e.currentTarget.src;
+                        if (youtubeId && src.includes('maxresdefault')) {
+                          e.currentTarget.src = `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`;
+                        } else if (!src.includes('home-live-mockup.jpg')) {
                           e.currentTarget.src = '/assets/home-live-mockup.jpg';
                         }
                       }}

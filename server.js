@@ -842,7 +842,7 @@ async function getSettings() {
     home_live_video_title: "How To Setup Youtube 24x7 Livestream",
     home_live_video_subtitle: "Stream LIVE",
     home_live_video_badge: "LIVE 1.5K VIEWERS",
-    home_live_video_poster: "https://images.unsplash.com/photo-1542751371-adc38448a05e?w=1200&auto=format&fit=crop&q=80"
+    home_live_video_poster: ""
   };
   if (pool && isConnected) {
     try {

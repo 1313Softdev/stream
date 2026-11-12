@@ -136,7 +136,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     home_live_video_title: 'How To Setup Youtube 24x7 Livestream',
     home_live_video_subtitle: 'Stream LIVE',
     home_live_video_badge: 'LIVE 1.5K VIEWERS',
-    home_live_video_poster: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=1200&auto=format&fit=crop&q=80',
+    home_live_video_poster: '',
   });
   const [previewPlaying, setPreviewPlaying] = useState(false);
 
@@ -1368,7 +1368,12 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               {/* Video Content */}
               {(() => {
                 const ytId = getYouTubeVideoId(settings.home_live_video_url);
-                const poster = settings.home_live_video_poster || '/assets/home-live-mockup.jpg';
+                const customPoster = settings.home_live_video_poster?.trim();
+                const poster = customPoster
+                  ? customPoster
+                  : ytId
+                  ? `https://i.ytimg.com/vi/${ytId}/maxresdefault.jpg`
+                  : '/assets/home-live-mockup.jpg';
 
                 if (previewPlaying && ytId) {
                   return (
@@ -1398,7 +1403,10 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                       alt="Preview Thumbnail"
                       className="w-full h-full object-cover select-none"
                       onError={(e) => {
-                        if (!e.currentTarget.src.includes('home-live-mockup.jpg')) {
+                        const src = e.currentTarget.src;
+                        if (ytId && src.includes('maxresdefault')) {
+                          e.currentTarget.src = `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`;
+                        } else if (!src.includes('home-live-mockup.jpg')) {
                           e.currentTarget.src = '/assets/home-live-mockup.jpg';
                         }
                       }}
