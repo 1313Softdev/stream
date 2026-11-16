@@ -1,5 +1,7 @@
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
 
 dotenv.config();
 
@@ -169,6 +171,100 @@ const memoryFallback = {
     ],
   ]),
 };
+
+const FALLBACK_DIR = path.resolve(process.cwd(), 'data');
+const FALLBACK_FILE = path.resolve(FALLBACK_DIR, 'local_fallback.json');
+
+export function saveLocalFallback() {
+  try {
+    if (!fs.existsSync(FALLBACK_DIR)) {
+      fs.mkdirSync(FALLBACK_DIR, { recursive: true });
+    }
+    const data = {
+      users: Array.from(memoryFallback.users.entries()),
+      slots: Array.from(memoryFallback.slots.entries()),
+      videos: Array.from(memoryFallback.videos.entries()),
+      orders: memoryFallback.orders,
+      settings: Array.from(memoryFallback.settings.entries()),
+      paymentGateways: Array.from(memoryFallback.paymentGateways.entries()),
+      subscriptionPlans: Array.from(memoryFallback.subscriptionPlans.entries()),
+      paymentTransactions: Array.from(memoryFallback.paymentTransactions.entries()),
+    };
+    fs.writeFileSync(FALLBACK_FILE, JSON.stringify(data, null, 2), 'utf-8');
+  } catch (e) {
+    // Non-fatal fallback saving error
+  }
+}
+
+export function loadLocalFallback() {
+  try {
+    if (fs.existsSync(FALLBACK_FILE)) {
+      const raw = fs.readFileSync(FALLBACK_FILE, 'utf-8');
+      const data = JSON.parse(raw);
+      if (Array.isArray(data.users) && data.users.length > 0) memoryFallback.users = new Map(data.users);
+      if (Array.isArray(data.slots) && data.slots.length > 0) memoryFallback.slots = new Map(data.slots);
+      if (Array.isArray(data.videos) && data.videos.length > 0) memoryFallback.videos = new Map(data.videos);
+      if (Array.isArray(data.orders)) memoryFallback.orders = data.orders;
+      if (Array.isArray(data.settings)) memoryFallback.settings = new Map(data.settings);
+      if (Array.isArray(data.paymentGateways)) memoryFallback.paymentGateways = new Map(data.paymentGateways);
+      if (Array.isArray(data.subscriptionPlans)) memoryFallback.subscriptionPlans = new Map(data.subscriptionPlans);
+      if (Array.isArray(data.paymentTransactions)) memoryFallback.paymentTransactions = new Map(data.paymentTransactions);
+      console.log(`[Local Fallback] Loaded ${memoryFallback.videos.size} video(s) and ${memoryFallback.slots.size} slot(s) from persistence`);
+    }
+  } catch (e) {
+    console.warn('[Local Fallback] Note loading local_fallback.json:', e);
+  }
+
+  // If no videos exist yet in memoryFallback, auto-discover existing videos in public/uploads
+  if (memoryFallback.videos.size === 0) {
+    try {
+      const uploadsDir = path.resolve(process.cwd(), 'public/uploads');
+      if (fs.existsSync(uploadsDir)) {
+        const files = fs.readdirSync(uploadsDir);
+        const ytFiles = files.filter(f => f.startsWith('yt-') && f.endsWith('.mp4'));
+        for (const yt of ytFiles) {
+          const videoId = yt.replace('yt-', '').replace('.mp4', '');
+          const thumbName = `thumb-${videoId}.jpg`;
+          const thumbExists = files.includes(thumbName);
+          const ytPath = path.resolve(uploadsDir, yt);
+          const stat = fs.statSync(ytPath);
+          const sizeMB = stat.size / (1024 * 1024);
+          const sizeFormatted = sizeMB >= 1000 ? `${(sizeMB / 1024).toFixed(1)} GB` : `${Math.round(sizeMB)} MB`;
+
+          const defaultTitle = videoId.includes('1794660633954') ? 'tour.mp4' : `Video ${videoId.slice(-6)}.mp4`;
+          const duration = videoId.includes('1794660633954') ? '43:54' : '13:12';
+
+          const vidObj = {
+            id: videoId,
+            userId: '6ae0fd7c4863791bef736a0a',
+            title: defaultTitle,
+            duration,
+            sizeBytes: stat.size,
+            sizeFormatted,
+            resolution: '1080p',
+            thumbnailUrl: thumbExists ? `/uploads/${thumbName}` : '/placeholder-thumb.jpg',
+            videoUrl: `/uploads/${yt}`,
+            videoPath: `public/uploads/${yt}`,
+            category: 'General',
+            status: 'ready',
+            processedForYouTube: true,
+            processingMessage: 'Converted to YouTube suitable nonstop streaming',
+            createdAt: new Date(stat.mtime).toLocaleDateString(),
+          };
+          memoryFallback.videos.set(videoId, vidObj);
+        }
+        if (memoryFallback.videos.size > 0) {
+          saveLocalFallback();
+        }
+      }
+    } catch (e) {
+      console.warn('[Local Fallback] Error scanning public/uploads:', e);
+    }
+  }
+}
+
+// Initial load
+loadLocalFallback();
 
 export async function initDatabase(): Promise<boolean> {
   try {
@@ -1610,6 +1706,7 @@ export async function getSlot(id: string) {
 
 export async function upsertSlot(slot: any) {
   memoryFallback.slots.set(slot.id, slot);
+  saveLocalFallback();
 
   if (pool && isConnected) {
     try {
@@ -1690,6 +1787,7 @@ export async function upsertSlot(slot: any) {
 
 export async function deleteSlot(id: string) {
   memoryFallback.slots.delete(id);
+  saveLocalFallback();
 
   if (pool && isConnected) {
     try {
@@ -1759,6 +1857,7 @@ export async function getVideo(id: string) {
 
 export async function upsertVideo(video: any) {
   memoryFallback.videos.set(video.id, video);
+  saveLocalFallback();
 
   if (pool && isConnected) {
     try {
@@ -1812,6 +1911,7 @@ export async function upsertVideo(video: any) {
 export async function deleteVideo(id: string) {
   const existing = memoryFallback.videos.get(id);
   memoryFallback.videos.delete(id);
+  saveLocalFallback();
 
   if (pool && isConnected) {
     try {

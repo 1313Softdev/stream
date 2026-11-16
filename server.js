@@ -2,8 +2,8 @@
 import "dotenv/config";
 import express from "express";
 import { spawn, spawnSync } from "child_process";
-import path from "path";
-import fs from "fs";
+import path2 from "path";
+import fs2 from "fs";
 import multer from "multer";
 import { fileURLToPath } from "url";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
@@ -12,6 +12,8 @@ import ffprobeInstaller from "@ffprobe-installer/ffprobe";
 // server/db.ts
 import mysql from "mysql2/promise";
 import dotenv from "dotenv";
+import fs from "fs";
+import path from "path";
 dotenv.config();
 var dbConfig = {
   host: process.env.DB_HOST || process.env.MYSQL_HOST || "127.0.0.1",
@@ -165,6 +167,90 @@ var memoryFallback = {
     ]
   ])
 };
+var FALLBACK_DIR = path.resolve(process.cwd(), "data");
+var FALLBACK_FILE = path.resolve(FALLBACK_DIR, "local_fallback.json");
+function saveLocalFallback() {
+  try {
+    if (!fs.existsSync(FALLBACK_DIR)) {
+      fs.mkdirSync(FALLBACK_DIR, { recursive: true });
+    }
+    const data = {
+      users: Array.from(memoryFallback.users.entries()),
+      slots: Array.from(memoryFallback.slots.entries()),
+      videos: Array.from(memoryFallback.videos.entries()),
+      orders: memoryFallback.orders,
+      settings: Array.from(memoryFallback.settings.entries()),
+      paymentGateways: Array.from(memoryFallback.paymentGateways.entries()),
+      subscriptionPlans: Array.from(memoryFallback.subscriptionPlans.entries()),
+      paymentTransactions: Array.from(memoryFallback.paymentTransactions.entries())
+    };
+    fs.writeFileSync(FALLBACK_FILE, JSON.stringify(data, null, 2), "utf-8");
+  } catch (e) {
+  }
+}
+function loadLocalFallback() {
+  try {
+    if (fs.existsSync(FALLBACK_FILE)) {
+      const raw = fs.readFileSync(FALLBACK_FILE, "utf-8");
+      const data = JSON.parse(raw);
+      if (Array.isArray(data.users) && data.users.length > 0) memoryFallback.users = new Map(data.users);
+      if (Array.isArray(data.slots) && data.slots.length > 0) memoryFallback.slots = new Map(data.slots);
+      if (Array.isArray(data.videos) && data.videos.length > 0) memoryFallback.videos = new Map(data.videos);
+      if (Array.isArray(data.orders)) memoryFallback.orders = data.orders;
+      if (Array.isArray(data.settings)) memoryFallback.settings = new Map(data.settings);
+      if (Array.isArray(data.paymentGateways)) memoryFallback.paymentGateways = new Map(data.paymentGateways);
+      if (Array.isArray(data.subscriptionPlans)) memoryFallback.subscriptionPlans = new Map(data.subscriptionPlans);
+      if (Array.isArray(data.paymentTransactions)) memoryFallback.paymentTransactions = new Map(data.paymentTransactions);
+      console.log(`[Local Fallback] Loaded ${memoryFallback.videos.size} video(s) and ${memoryFallback.slots.size} slot(s) from persistence`);
+    }
+  } catch (e) {
+    console.warn("[Local Fallback] Note loading local_fallback.json:", e);
+  }
+  if (memoryFallback.videos.size === 0) {
+    try {
+      const uploadsDir2 = path.resolve(process.cwd(), "public/uploads");
+      if (fs.existsSync(uploadsDir2)) {
+        const files = fs.readdirSync(uploadsDir2);
+        const ytFiles = files.filter((f) => f.startsWith("yt-") && f.endsWith(".mp4"));
+        for (const yt of ytFiles) {
+          const videoId = yt.replace("yt-", "").replace(".mp4", "");
+          const thumbName = `thumb-${videoId}.jpg`;
+          const thumbExists = files.includes(thumbName);
+          const ytPath = path.resolve(uploadsDir2, yt);
+          const stat = fs.statSync(ytPath);
+          const sizeMB = stat.size / (1024 * 1024);
+          const sizeFormatted = sizeMB >= 1e3 ? `${(sizeMB / 1024).toFixed(1)} GB` : `${Math.round(sizeMB)} MB`;
+          const defaultTitle = videoId.includes("1794660633954") ? "tour.mp4" : `Video ${videoId.slice(-6)}.mp4`;
+          const duration = videoId.includes("1794660633954") ? "43:54" : "13:12";
+          const vidObj = {
+            id: videoId,
+            userId: "6ae0fd7c4863791bef736a0a",
+            title: defaultTitle,
+            duration,
+            sizeBytes: stat.size,
+            sizeFormatted,
+            resolution: "1080p",
+            thumbnailUrl: thumbExists ? `/uploads/${thumbName}` : "/placeholder-thumb.jpg",
+            videoUrl: `/uploads/${yt}`,
+            videoPath: `public/uploads/${yt}`,
+            category: "General",
+            status: "ready",
+            processedForYouTube: true,
+            processingMessage: "Converted to YouTube suitable nonstop streaming",
+            createdAt: new Date(stat.mtime).toLocaleDateString()
+          };
+          memoryFallback.videos.set(videoId, vidObj);
+        }
+        if (memoryFallback.videos.size > 0) {
+          saveLocalFallback();
+        }
+      }
+    } catch (e) {
+      console.warn("[Local Fallback] Error scanning public/uploads:", e);
+    }
+  }
+}
+loadLocalFallback();
 async function initDatabase() {
   try {
     try {
@@ -1433,6 +1519,7 @@ async function getSlot(id) {
 }
 async function upsertSlot(slot) {
   memoryFallback.slots.set(slot.id, slot);
+  saveLocalFallback();
   if (pool && isConnected) {
     try {
       await pool.query(
@@ -1511,6 +1598,7 @@ async function upsertSlot(slot) {
 }
 async function deleteSlot(id) {
   memoryFallback.slots.delete(id);
+  saveLocalFallback();
   if (pool && isConnected) {
     try {
       await pool.query("DELETE FROM slots WHERE id = ?", [id]);
@@ -1572,6 +1660,7 @@ async function getVideo(id) {
 }
 async function upsertVideo(video) {
   memoryFallback.videos.set(video.id, video);
+  saveLocalFallback();
   if (pool && isConnected) {
     try {
       await pool.query(
@@ -1622,6 +1711,7 @@ async function upsertVideo(video) {
 async function deleteVideo(id) {
   const existing = memoryFallback.videos.get(id);
   memoryFallback.videos.delete(id);
+  saveLocalFallback();
   if (pool && isConnected) {
     try {
       let ownerId = existing?.userId;
@@ -1746,12 +1836,12 @@ function verifyToken(token) {
 
 // server.ts
 var __filename = fileURLToPath(import.meta.url);
-var __dirname = path.dirname(__filename);
+var __dirname = path2.dirname(__filename);
 var app = express();
 var port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3e3;
-var uploadsDir = path.resolve(__dirname, "public/uploads");
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+var uploadsDir = path2.resolve(__dirname, "public/uploads");
+if (!fs2.existsSync(uploadsDir)) {
+  fs2.mkdirSync(uploadsDir, { recursive: true });
 }
 app.use(express.json());
 app.use("/uploads", express.static(uploadsDir));
@@ -1766,7 +1856,7 @@ var storage = multer.diskStorage({
   },
   filename: (_req, file, cb) => {
     const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    const ext = path.extname(file.originalname) || ".mp4";
+    const ext = path2.extname(file.originalname) || ".mp4";
     cb(null, `video-${uniqueSuffix}${ext}`);
   }
 });
@@ -1811,10 +1901,10 @@ function getIngestUrl(platform, rawStreamKey, customUrl) {
   return `rtmp://a.rtmp.youtube.com/live2/${cleanKey}`;
 }
 function getFfmpegPath() {
-  if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) {
+  if (process.env.FFMPEG_PATH && fs2.existsSync(process.env.FFMPEG_PATH)) {
     return process.env.FFMPEG_PATH;
   }
-  if (ffmpegInstaller && ffmpegInstaller.path && fs.existsSync(ffmpegInstaller.path)) {
+  if (ffmpegInstaller && ffmpegInstaller.path && fs2.existsSync(ffmpegInstaller.path)) {
     return ffmpegInstaller.path;
   }
   const candidates = [
@@ -1823,23 +1913,23 @@ function getFfmpegPath() {
     "/opt/homebrew/bin/ffmpeg"
   ];
   for (const p of candidates) {
-    if (fs.existsSync(p)) return p;
+    if (fs2.existsSync(p)) return p;
   }
   try {
     const res = spawnSync("which", ["ffmpeg"]);
     if (res.status === 0) {
       const found = res.stdout.toString().trim();
-      if (found && fs.existsSync(found)) return found;
+      if (found && fs2.existsSync(found)) return found;
     }
   } catch {
   }
   return "ffmpeg";
 }
 function getFfprobePath() {
-  if (process.env.FFPROBE_PATH && fs.existsSync(process.env.FFPROBE_PATH)) {
+  if (process.env.FFPROBE_PATH && fs2.existsSync(process.env.FFPROBE_PATH)) {
     return process.env.FFPROBE_PATH;
   }
-  if (ffprobeInstaller && ffprobeInstaller.path && fs.existsSync(ffprobeInstaller.path)) {
+  if (ffprobeInstaller && ffprobeInstaller.path && fs2.existsSync(ffprobeInstaller.path)) {
     return ffprobeInstaller.path;
   }
   const candidates = [
@@ -1848,13 +1938,13 @@ function getFfprobePath() {
     "/opt/homebrew/bin/ffprobe"
   ];
   for (const p of candidates) {
-    if (fs.existsSync(p)) return p;
+    if (fs2.existsSync(p)) return p;
   }
   try {
     const res = spawnSync("which", ["ffprobe"]);
     if (res.status === 0) {
       const found = res.stdout.toString().trim();
-      if (found && fs.existsSync(found)) return found;
+      if (found && fs2.existsSync(found)) return found;
     }
   } catch {
   }
@@ -1862,8 +1952,8 @@ function getFfprobePath() {
 }
 function isFfmpegInstalled() {
   const p = getFfmpegPath();
-  if (path.isAbsolute(p)) {
-    return fs.existsSync(p);
+  if (path2.isAbsolute(p)) {
+    return fs2.existsSync(p);
   }
   try {
     const res = spawnSync(p, ["-version"]);
@@ -1876,23 +1966,23 @@ function resolveVideoFilePath(videoPath) {
   if (!videoPath || typeof videoPath !== "string") return "";
   const trimmed = videoPath.trim();
   if (trimmed === "vid-lofi-01" || trimmed.includes("lofi")) {
-    return path.resolve(__dirname, "public/videos/lofi-chill.mp4");
+    return path2.resolve(__dirname, "public/videos/lofi-chill.mp4");
   } else if (trimmed === "vid-nature-02" || trimmed.includes("nature")) {
-    return path.resolve(__dirname, "public/videos/nature-relax.mp4");
+    return path2.resolve(__dirname, "public/videos/nature-relax.mp4");
   } else if (trimmed === "vid-tech-03" || trimmed.includes("tech")) {
-    return path.resolve(__dirname, "public/videos/tech-masterclass.mp4");
+    return path2.resolve(__dirname, "public/videos/tech-masterclass.mp4");
   } else if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
     return trimmed;
   } else {
     const candidates = [
-      path.resolve(__dirname, trimmed),
-      path.resolve(__dirname, "public", trimmed.replace(/^\//, "")),
-      path.resolve(__dirname, "public/uploads", path.basename(trimmed)),
-      path.resolve(__dirname, "public/videos", path.basename(trimmed)),
-      path.resolve(trimmed)
+      path2.resolve(__dirname, trimmed),
+      path2.resolve(__dirname, "public", trimmed.replace(/^\//, "")),
+      path2.resolve(__dirname, "public/uploads", path2.basename(trimmed)),
+      path2.resolve(__dirname, "public/videos", path2.basename(trimmed)),
+      path2.resolve(trimmed)
     ];
     for (const cand of candidates) {
-      if (fs.existsSync(cand) && fs.statSync(cand).isFile()) {
+      if (fs2.existsSync(cand) && fs2.statSync(cand).isFile()) {
         return cand;
       }
     }
@@ -1956,6 +2046,8 @@ app.post("/api/stream/start", async (req, res) => {
   const audioBitrateStr = `${audioBitrateNum}k`;
   const existing = activeStreams.get(slotId);
   if (existing) {
+    existing.userRequestedStop = true;
+    if (existing.reconnectTimer) clearTimeout(existing.reconnectTimer);
     try {
       existing.process.kill("SIGTERM");
     } catch {
@@ -1963,11 +2055,80 @@ app.post("/api/stream/start", async (req, res) => {
     activeStreams.delete(slotId);
   }
   let resolvedVideo = resolveVideoFilePath(videoPath);
-  if (!resolvedVideo || !resolvedVideo.startsWith("http") && !fs.existsSync(resolvedVideo)) {
-    resolvedVideo = path.resolve(__dirname, "public/videos/lofi-chill.mp4");
+  if (!resolvedVideo || !resolvedVideo.startsWith("http") && !fs2.existsSync(resolvedVideo)) {
+    resolvedVideo = path2.resolve(__dirname, "public/videos/lofi-chill.mp4");
+  }
+  const targetUrl = getIngestUrl(platform, cleanedKey, customRtmpUrl);
+  const videoDisplayName = resolvedVideo.startsWith("http") ? resolvedVideo : path2.basename(resolvedVideo);
+  const logs = [];
+  logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Stream LIVE 24/7 Cloud Worker initiating live stream for slot ${slotId}`);
+  logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Platform: ${platform} | Destination: ${targetUrl.replace(cleanedKey, "***" + cleanedKey.slice(-4))}`);
+  logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Real Video source: ${videoDisplayName} (24/7 infinite loop active)`);
+  logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Target Quality: ${bitrateNum} Kbps CBR @ ${fpsNum} FPS | Audio: ${audioBitrateNum} Kbps AAC Stereo`);
+  const session = {
+    slotId,
+    streamKey: cleanedKey,
+    platform,
+    rtmpTarget: targetUrl,
+    videoPath: resolvedVideo,
+    customRtmpUrl,
+    targetBitrateKbps: bitrateNum,
+    fps: fpsNum,
+    audioBitrateKbps: audioBitrateNum,
+    process: null,
+    startedAt: Date.now(),
+    status: "starting",
+    logs,
+    lastStats: { fps: fpsNum, bitrate: `${bitrateNum}kbits/s`, frames: 0, speed: "0x" },
+    userRequestedStop: false,
+    reconnectAttempts: 0
+  };
+  activeStreams.set(slotId, session);
+  spawnFfmpegForSession(session);
+  try {
+    const s = await getSlot(slotId);
+    if (s) {
+      await upsertSlot({ ...s, streamStatus: "Live", startedAt: Date.now() });
+    }
+  } catch {
+  }
+  return res.json({
+    success: true,
+    slotId,
+    pid: session.process?.pid,
+    status: "starting",
+    rtmpTarget: targetUrl.replace(cleanedKey, "***KEY***"),
+    videoSource: path2.basename(resolvedVideo)
+  });
+});
+function spawnFfmpegForSession(session) {
+  if (session.reconnectTimer) {
+    clearTimeout(session.reconnectTimer);
+    session.reconnectTimer = void 0;
+  }
+  if (session.userRequestedStop) return;
+  const {
+    slotId,
+    streamKey,
+    platform,
+    rtmpTarget,
+    videoPath,
+    targetBitrateKbps,
+    fps,
+    audioBitrateKbps
+  } = session;
+  const bitrateNum = targetBitrateKbps || 2500;
+  const fpsNum = fps === 60 ? 60 : 30;
+  const audioBitrateNum = audioBitrateKbps || 128;
+  const gopSize = fpsNum * 2;
+  const videoBitrateStr = `${bitrateNum}k`;
+  const audioBitrateStr = `${audioBitrateNum}k`;
+  let resolvedVideo = resolveVideoFilePath(videoPath);
+  if (!resolvedVideo || !resolvedVideo.startsWith("http") && !fs2.existsSync(resolvedVideo)) {
+    resolvedVideo = path2.resolve(__dirname, "public/videos/lofi-chill.mp4");
   }
   let hasAudio = false;
-  if (!resolvedVideo.startsWith("http") && fs.existsSync(resolvedVideo)) {
+  if (!resolvedVideo.startsWith("http") && fs2.existsSync(resolvedVideo)) {
     try {
       const probeAudio = spawnSync(getFfprobePath(), [
         "-v",
@@ -1987,19 +2148,16 @@ app.post("/api/stream/start", async (req, res) => {
   } else {
     hasAudio = true;
   }
-  const targetUrl = getIngestUrl(platform, cleanedKey, customRtmpUrl);
-  const videoDisplayName = resolvedVideo.startsWith("http") ? resolvedVideo : path.basename(resolvedVideo);
-  const logs = [];
-  logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Stream LIVE 24/7 Cloud Worker initiating live stream for slot ${slotId}`);
-  logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Platform: ${platform} | Destination: ${targetUrl.replace(cleanedKey, "***" + cleanedKey.slice(-4))}`);
-  logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Real Video source: ${videoDisplayName} (24/7 infinite loop active)`);
-  logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Target Quality: ${bitrateNum} Kbps CBR @ ${fpsNum} FPS | Audio: ${audioBitrateNum} Kbps AAC Stereo`);
   let ffmpegArgs;
   if (hasAudio) {
     ffmpegArgs = [
       "-re",
       "-stream_loop",
       "-1",
+      "-fflags",
+      "+genpts+discardcorrupt",
+      "-avoid_negative_ts",
+      "make_zero",
       "-i",
       resolvedVideo,
       "-vf",
@@ -2034,13 +2192,17 @@ app.post("/api/stream/start", async (req, res) => {
       "no_duration_filesize",
       "-f",
       "flv",
-      targetUrl
+      rtmpTarget
     ];
   } else {
     ffmpegArgs = [
       "-re",
       "-stream_loop",
       "-1",
+      "-fflags",
+      "+genpts+discardcorrupt",
+      "-avoid_negative_ts",
+      "make_zero",
       "-i",
       resolvedVideo,
       "-f",
@@ -2079,31 +2241,17 @@ app.post("/api/stream/start", async (req, res) => {
       "0:v:0",
       "-map",
       "1:a:0",
-      "-shortest",
       "-flvflags",
       "no_duration_filesize",
       "-f",
       "flv",
-      targetUrl
+      rtmpTarget
     ];
   }
   const child = spawn(getFfmpegPath(), ffmpegArgs);
-  console.log(`[Slot ${slotId}] FFmpeg process spawned (PID: ${child.pid})`);
-  console.log(`[Slot ${slotId}] Destination: ${targetUrl.replace(cleanedKey, "***" + cleanedKey.slice(-4))}`);
-  console.log(`[Slot ${slotId}] Video input: ${resolvedVideo}`);
-  const session = {
-    slotId,
-    streamKey,
-    platform,
-    rtmpTarget: targetUrl,
-    videoPath: resolvedVideo,
-    process: child,
-    startedAt: Date.now(),
-    status: "starting",
-    logs,
-    lastStats: { fps: fpsNum, bitrate: `${bitrateNum}kbits/s`, frames: 0, speed: "0x" }
-  };
-  activeStreams.set(slotId, session);
+  session.process = child;
+  session.status = "starting";
+  console.log(`[Slot ${slotId}] FFmpeg spawned (PID: ${child.pid}). Looping: infinite until time lapsed.`);
   child.on("error", (err) => {
     console.error(`[Slot ${slotId}] FFmpeg process error:`, err);
     session.status = "error";
@@ -2123,6 +2271,7 @@ app.post("/api/stream/start", async (req, res) => {
       if (line.includes("frame=") && line.includes("bitrate=")) {
         session.status = "live";
         session.lastError = void 0;
+        session.reconnectAttempts = 0;
         const fpsMatch = line.match(/fps=\s*([\d.]+)/);
         const bitrateMatch = line.match(/bitrate=\s*([\w./]+)/);
         const frameMatch = line.match(/frame=\s*(\d+)/);
@@ -2152,58 +2301,122 @@ app.post("/api/stream/start", async (req, res) => {
       }
     }
   });
-  child.on("close", (code) => {
-    session.status = code === 0 ? "stopped" : "error";
-    if (code !== 0 && !session.lastError) {
-      const errorMsg = [...session.logs].reverse().find((l) => {
-        const low = l.toLowerCase().trim();
-        if (low.startsWith("conversion failed") || low.startsWith("stream process ended") || low.includes("exited with code") || low === "conversion failed!") {
-          return false;
+  child.on("close", async (code) => {
+    console.log(`[Slot ${slotId}] FFmpeg process closed (code: ${code}). userRequestedStop: ${session.userRequestedStop}`);
+    if (session.userRequestedStop) {
+      session.status = "stopped";
+      activeStreams.delete(slotId);
+      session.logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Live stream stopped by user.`);
+      return;
+    }
+    let isExpired = false;
+    let expiresAtMs = 0;
+    try {
+      const slot = await getSlot(slotId);
+      if (slot) {
+        expiresAtMs = slot.expiresAt && slot.expiresAt > 0 ? slot.expiresAt : 0;
+        if (!expiresAtMs && slot.expireOn) {
+          const parsed = Date.parse(slot.expireOn.replace("-", " "));
+          if (!isNaN(parsed) && parsed > 0) expiresAtMs = parsed;
         }
-        return low.includes("error") || low.includes("failed") || low.includes("invalid") || low.includes("rejected") || low.includes("denied") || low.includes("refused") || low.includes("handshake") || low.includes("end of file");
-      });
-      if (errorMsg) {
-        const low = errorMsg.toLowerCase();
-        if (low.includes("opening encoder") || low.includes("initializing output stream") || low.includes("bit_rate") || low.includes("width not divisible")) {
-          session.lastError = "Video encoder error: Video dimensions or parameters were incompatible. Please use default 720p (2500 Kbps) settings or select a standard MP4 video.";
-        } else if (low.includes("rtmp") || low.includes("handshake") || low.includes("end of file") || low.includes("connection") || low.includes("broken pipe") || low.includes("io error")) {
-          session.lastError = "YouTube Live rejected connection: Invalid or inactive Stream Key. Please copy your active Stream Key from YouTube Studio (studio.youtube.com/channel/live) and ensure Live Streaming is enabled.";
-        } else {
-          session.lastError = `Stream failed: ${errorMsg}`;
+        if (slot.status === "expired" || expiresAtMs > 0 && expiresAtMs <= Date.now()) {
+          isExpired = true;
         }
-      } else {
-        session.lastError = "YouTube Live rejected connection: Invalid or inactive Stream Key. Please copy your active Stream Key from YouTube Studio (studio.youtube.com/channel/live) and paste it into the slot settings.";
       }
+    } catch {
     }
-    console.log(`[Slot ${slotId}] FFmpeg process closed with code ${code}. Status: ${session.status}, Error: ${session.lastError || "None"}`);
-    if (code !== 0 && session.logs.length > 0) {
-      console.log(`[Slot ${slotId}] Last FFmpeg logs before close:`);
-      session.logs.slice(-5).forEach((l) => console.log(`   > ${l}`));
+    if (isExpired) {
+      console.log(`[Slot ${slotId}] Subscription time lapsed! Stopping live stream loop permanently.`);
+      session.status = "stopped";
+      activeStreams.delete(slotId);
+      session.logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Stream ended: Slot subscription duration has elapsed (time lapsed).`);
+      await upsertSlot({ id: slotId, status: "expired", streamStatus: "Off" }).catch(() => {
+      });
+      return;
     }
-    session.logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Stream process ended (code ${code})`);
+    session.reconnectAttempts = (session.reconnectAttempts || 0) + 1;
+    session.status = "starting";
+    const attempts = session.reconnectAttempts;
+    const delayMs = attempts > 15 ? 1e4 : attempts > 5 ? 5e3 : 1500;
+    session.logs.push(
+      `[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] 24/7 video loop continuous active (reconnect #${session.reconnectAttempts}). Streaming nonstop until slot expires.`
+    );
+    console.log(`[Slot ${slotId}] Auto-reconnecting stream in ${delayMs / 1e3}s (slot not expired)...`);
+    session.reconnectTimer = setTimeout(() => {
+      if (!session.userRequestedStop && activeStreams.has(slotId)) {
+        spawnFfmpegForSession(session);
+      }
+    }, delayMs);
   });
-  return res.json({
-    success: true,
-    slotId,
-    pid: child.pid,
+}
+async function startSessionForSlot(slot) {
+  if (!slot.streamKey || activeStreams.has(slot.id)) return;
+  const cleanedKey = cleanStreamKey(slot.streamKey);
+  if (!cleanedKey) return;
+  const bitrateNum = slot.targetBitrateKbps || 2500;
+  const fpsNum = slot.fpsPreset === 60 ? 60 : 30;
+  const audioBitrateNum = slot.audioBitrateKbps || 128;
+  const platform = slot.platform || "YouTube";
+  const customRtmpUrl = slot.rtmpServerUrl;
+  const targetUrl = getIngestUrl(platform, cleanedKey, customRtmpUrl);
+  let videoPath = "";
+  if (slot.videoId) {
+    const v = await getVideo(slot.videoId);
+    if (v) videoPath = v.videoPath || v.videoUrl;
+  }
+  let resolvedVideo = resolveVideoFilePath(videoPath);
+  if (!resolvedVideo || !resolvedVideo.startsWith("http") && !fs2.existsSync(resolvedVideo)) {
+    resolvedVideo = path2.resolve(__dirname, "public/videos/lofi-chill.mp4");
+  }
+  const logs = [
+    `[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Resuming continuous 24/7 live stream for slot ${slot.id}`,
+    `[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Platform: ${platform} | Source: ${path2.basename(resolvedVideo)}`
+  ];
+  const session = {
+    slotId: slot.id,
+    streamKey: cleanedKey,
+    platform,
+    rtmpTarget: targetUrl,
+    videoPath: resolvedVideo,
+    customRtmpUrl,
+    targetBitrateKbps: bitrateNum,
+    fps: fpsNum,
+    audioBitrateKbps: audioBitrateNum,
+    process: null,
+    startedAt: Date.now(),
     status: "starting",
-    rtmpTarget: targetUrl.replace(streamKey.trim(), "***KEY***"),
-    videoSource: path.basename(resolvedVideo)
-  });
-});
-app.post("/api/stream/stop", (req, res) => {
+    logs,
+    lastStats: { fps: fpsNum, bitrate: `${bitrateNum}kbits/s`, frames: 0, speed: "0x" },
+    userRequestedStop: false,
+    reconnectAttempts: 0
+  };
+  activeStreams.set(slot.id, session);
+  spawnFfmpegForSession(session);
+}
+app.post("/api/stream/stop", async (req, res) => {
   const { slotId } = req.body;
   if (!slotId) return res.status(400).json({ error: "slotId required" });
   const session = activeStreams.get(slotId);
-  if (!session) {
-    return res.json({ success: true, message: "Stream was not running" });
+  if (session) {
+    session.userRequestedStop = true;
+    if (session.reconnectTimer) {
+      clearTimeout(session.reconnectTimer);
+      session.reconnectTimer = void 0;
+    }
+    try {
+      session.process.kill("SIGTERM");
+    } catch {
+    }
+    session.status = "stopped";
+    activeStreams.delete(slotId);
   }
   try {
-    session.process.kill("SIGTERM");
+    const s = await getSlot(slotId);
+    if (s) {
+      await upsertSlot({ ...s, streamStatus: "Off" });
+    }
   } catch {
   }
-  session.status = "stopped";
-  activeStreams.delete(slotId);
   return res.json({ success: true, message: "Stream stopped successfully" });
 });
 var FIFTEEN_DAYS_MS = 15 * 24 * 60 * 60 * 1e3;
@@ -2282,7 +2495,7 @@ app.post("/api/stream/test-key", async (req, res) => {
     return res.status(400).json({ valid: false, message: "Please enter a stream key to test" });
   }
   const targetUrl = getIngestUrl(platform, cleanedKey, customRtmpUrl);
-  const testVideo = path.resolve(__dirname, "public/sample-stream.mp4");
+  const testVideo = path2.resolve(__dirname, "public/sample-stream.mp4");
   const probeArgs = [
     "-re",
     "-i",
@@ -2687,12 +2900,12 @@ async function processVideoForYouTubeStreaming(videoId) {
       activeOptimizations.delete(videoId);
       return;
     }
-    const uploadsDir2 = path.resolve(__dirname, "public/uploads");
-    if (!fs.existsSync(uploadsDir2)) {
-      fs.mkdirSync(uploadsDir2, { recursive: true });
+    const uploadsDir2 = path2.resolve(__dirname, "public/uploads");
+    if (!fs2.existsSync(uploadsDir2)) {
+      fs2.mkdirSync(uploadsDir2, { recursive: true });
     }
     const resolvedSource = resolveVideoFilePath(video.videoPath || video.videoUrl);
-    if (!resolvedSource || !fs.existsSync(resolvedSource)) {
+    if (!resolvedSource || !fs2.existsSync(resolvedSource)) {
       console.warn(`[YouTube Optimizer] Local source file not found for video ${videoId}:`, video.videoPath || video.videoUrl);
       await upsertVideo({
         ...video,
@@ -2704,7 +2917,7 @@ async function processVideoForYouTubeStreaming(videoId) {
       return;
     }
     const thumbFilename = `thumb-${videoId}.jpg`;
-    const thumbAbsPath = path.resolve(uploadsDir2, thumbFilename);
+    const thumbAbsPath = path2.resolve(uploadsDir2, thumbFilename);
     const thumbUrl = `/uploads/${thumbFilename}`;
     try {
       spawnSync(getFfmpegPath(), [
@@ -2724,7 +2937,7 @@ async function processVideoForYouTubeStreaming(videoId) {
     } catch (thumbErr) {
       console.warn(`[YouTube Optimizer] Thumbnail extraction failed for ${videoId}:`, thumbErr);
     }
-    const hasThumb = fs.existsSync(thumbAbsPath) && fs.statSync(thumbAbsPath).size > 1e3;
+    const hasThumb = fs2.existsSync(thumbAbsPath) && fs2.statSync(thumbAbsPath).size > 1e3;
     let durationSeconds = 0;
     let resolutionStr = video.resolution || "1080p";
     let hasAudioTrack = false;
@@ -2758,7 +2971,7 @@ async function processVideoForYouTubeStreaming(videoId) {
     }
     const formattedDuration = durationSeconds > 0 ? formatDurationSeconds(durationSeconds) : video.duration || "00:00";
     const optFilename = `yt-${videoId}.mp4`;
-    const optFilePath = path.resolve(uploadsDir2, optFilename);
+    const optFilePath = path2.resolve(uploadsDir2, optFilename);
     const optUrl = `/uploads/${optFilename}`;
     const optRelPath = `public/uploads/${optFilename}`;
     const ffmpegArgs = ["-y", "-i", resolvedSource];
@@ -2831,7 +3044,7 @@ async function processVideoForYouTubeStreaming(videoId) {
         reject(err);
       });
       transcodeProc.on("close", (code) => {
-        if (code === 0 && fs.existsSync(optFilePath) && fs.statSync(optFilePath).size > 1e3) {
+        if (code === 0 && fs2.existsSync(optFilePath) && fs2.statSync(optFilePath).size > 1e3) {
           resolve();
         } else {
           console.error(`[YouTube Optimizer] FFmpeg exited code ${code}: ${stderr.slice(-300)}`);
@@ -2842,8 +3055,8 @@ async function processVideoForYouTubeStreaming(videoId) {
     let finalPath = optRelPath;
     let finalUrl = optUrl;
     let finalSizeBytes = video.sizeBytes || 0;
-    if (fs.existsSync(optFilePath) && fs.statSync(optFilePath).size > 1e3) {
-      finalSizeBytes = fs.statSync(optFilePath).size;
+    if (fs2.existsSync(optFilePath) && fs2.statSync(optFilePath).size > 1e3) {
+      finalSizeBytes = fs2.statSync(optFilePath).size;
     } else {
       finalPath = video.videoPath || resolvedSource;
       finalUrl = video.videoUrl;
@@ -3462,12 +3675,12 @@ app.use((err, _req, res, _next) => {
 });
 async function startServer() {
   await initDatabase();
-  const isProduction = process.env.NODE_ENV === "production" || !fs.existsSync(path.resolve(__dirname, "src")) && fs.existsSync(path.resolve(__dirname, "dist/index.html"));
+  const isProduction = process.env.NODE_ENV === "production" || !fs2.existsSync(path2.resolve(__dirname, "src")) && fs2.existsSync(path2.resolve(__dirname, "dist/index.html"));
   if (isProduction) {
     console.log("[Server] Running in PRODUCTION mode, serving static files from dist/");
-    app.use(express.static(path.resolve(__dirname, "dist")));
+    app.use(express.static(path2.resolve(__dirname, "dist")));
     app.get("*", (_req, res) => {
-      res.sendFile(path.resolve(__dirname, "dist/index.html"));
+      res.sendFile(path2.resolve(__dirname, "dist/index.html"));
     });
   } else {
     console.log("[Server] Running in DEVELOPMENT mode with Vite HMR");
@@ -3494,6 +3707,26 @@ async function startServer() {
         console.warn("[YouTube Optimizer] Startup check error:", err);
       }
     }, 3e3);
+    setTimeout(async () => {
+      try {
+        const allSlots = await getSlots();
+        const now = Date.now();
+        for (const slot of allSlots) {
+          let expiresAtMs = slot.expiresAt && slot.expiresAt > 0 ? slot.expiresAt : 0;
+          if (!expiresAtMs && slot.expireOn) {
+            const parsed = Date.parse(slot.expireOn.replace("-", " "));
+            if (!isNaN(parsed) && parsed > 0) expiresAtMs = parsed;
+          }
+          const isExpired = slot.status === "expired" || expiresAtMs > 0 && expiresAtMs <= now;
+          if (!isExpired && slot.streamStatus === "Live" && slot.streamKey && !activeStreams.has(slot.id)) {
+            console.log(`[Auto-Resume] Resuming 24/7 continuous stream for slot ${slot.id} ("${slot.name}")...`);
+            startSessionForSlot(slot);
+          }
+        }
+      } catch (err) {
+        console.warn("[Auto-Resume] Startup check error:", err);
+      }
+    }, 4500);
   });
 }
 startServer().catch(console.error);

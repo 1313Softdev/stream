@@ -11,3 +11,5 @@ env.txt
 !.env.example
 public/uploads/*
 !public/uploads/.gitkeep
+data/*
+!data/.gitkeep

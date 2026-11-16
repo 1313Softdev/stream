@@ -88,6 +88,10 @@ interface StreamSession {
   platform: string;
   rtmpTarget: string;
   videoPath: string;
+  customRtmpUrl?: string;
+  targetBitrateKbps: number;
+  fps: number;
+  audioBitrateKbps: number;
   process: ChildProcess;
   startedAt: number;
   status: 'starting' | 'live' | 'error' | 'stopped';
@@ -100,6 +104,9 @@ interface StreamSession {
     time?: string;
   };
   lastError?: string;
+  userRequestedStop?: boolean;
+  reconnectAttempts?: number;
+  reconnectTimer?: NodeJS.Timeout;
 }
 
 const activeStreams = new Map<string, StreamSession>();
@@ -310,6 +317,8 @@ app.post('/api/stream/start', async (req, res) => {
   // Stop any existing stream on this slot
   const existing = activeStreams.get(slotId);
   if (existing) {
+    existing.userRequestedStop = true;
+    if (existing.reconnectTimer) clearTimeout(existing.reconnectTimer);
     try {
       existing.process.kill('SIGTERM');
     } catch {}
@@ -318,13 +327,92 @@ app.post('/api/stream/start', async (req, res) => {
 
   // Determine real video file path
   let resolvedVideo = resolveVideoFilePath(videoPath);
-
-  // Fallback to real preset broadcast video (never color bars test pattern)
   if (!resolvedVideo || (!resolvedVideo.startsWith('http') && !fs.existsSync(resolvedVideo))) {
     resolvedVideo = path.resolve(__dirname, 'public/videos/lofi-chill.mp4');
   }
 
-  // Check if input has audio track to guarantee YouTube receives stereo audio
+  // Build target RTMP URL
+  const targetUrl = getIngestUrl(platform, cleanedKey, customRtmpUrl);
+  const videoDisplayName = resolvedVideo.startsWith('http') ? resolvedVideo : path.basename(resolvedVideo);
+  const logs: string[] = [];
+  logs.push(`[${new Date().toLocaleTimeString()}] Stream LIVE 24/7 Cloud Worker initiating live stream for slot ${slotId}`);
+  logs.push(`[${new Date().toLocaleTimeString()}] Platform: ${platform} | Destination: ${targetUrl.replace(cleanedKey, '***' + cleanedKey.slice(-4))}`);
+  logs.push(`[${new Date().toLocaleTimeString()}] Real Video source: ${videoDisplayName} (24/7 infinite loop active)`);
+  logs.push(`[${new Date().toLocaleTimeString()}] Target Quality: ${bitrateNum} Kbps CBR @ ${fpsNum} FPS | Audio: ${audioBitrateNum} Kbps AAC Stereo`);
+
+  const session: StreamSession = {
+    slotId,
+    streamKey: cleanedKey,
+    platform,
+    rtmpTarget: targetUrl,
+    videoPath: resolvedVideo,
+    customRtmpUrl,
+    targetBitrateKbps: bitrateNum,
+    fps: fpsNum,
+    audioBitrateKbps: audioBitrateNum,
+    process: null as any,
+    startedAt: Date.now(),
+    status: 'starting',
+    logs,
+    lastStats: { fps: fpsNum, bitrate: `${bitrateNum}kbits/s`, frames: 0, speed: '0x' },
+    userRequestedStop: false,
+    reconnectAttempts: 0,
+  };
+
+  activeStreams.set(slotId, session);
+  spawnFfmpegForSession(session);
+
+  // Mark slot as Live in DB
+  try {
+    const s = await getSlot(slotId);
+    if (s) {
+      await upsertSlot({ ...s, streamStatus: 'Live', startedAt: Date.now() });
+    }
+  } catch {}
+
+  return res.json({
+    success: true,
+    slotId,
+    pid: session.process?.pid,
+    status: 'starting',
+    rtmpTarget: targetUrl.replace(cleanedKey, '***KEY***'),
+    videoSource: path.basename(resolvedVideo),
+  });
+});
+
+function spawnFfmpegForSession(session: StreamSession): void {
+  // Clear any existing reconnect timer
+  if (session.reconnectTimer) {
+    clearTimeout(session.reconnectTimer);
+    session.reconnectTimer = undefined;
+  }
+
+  // If user requested stop, do not spawn
+  if (session.userRequestedStop) return;
+
+  const {
+    slotId,
+    streamKey,
+    platform,
+    rtmpTarget,
+    videoPath,
+    targetBitrateKbps,
+    fps,
+    audioBitrateKbps,
+  } = session;
+
+  const bitrateNum = targetBitrateKbps || 2500;
+  const fpsNum = fps === 60 ? 60 : 30;
+  const audioBitrateNum = audioBitrateKbps || 128;
+  const gopSize = fpsNum * 2;
+  const videoBitrateStr = `${bitrateNum}k`;
+  const audioBitrateStr = `${audioBitrateNum}k`;
+
+  let resolvedVideo = resolveVideoFilePath(videoPath);
+  if (!resolvedVideo || (!resolvedVideo.startsWith('http') && !fs.existsSync(resolvedVideo))) {
+    resolvedVideo = path.resolve(__dirname, 'public/videos/lofi-chill.mp4');
+  }
+
   let hasAudio = false;
   if (!resolvedVideo.startsWith('http') && fs.existsSync(resolvedVideo)) {
     try {
@@ -343,32 +431,19 @@ app.post('/api/stream/start', async (req, res) => {
     hasAudio = true;
   }
 
-  // Build target RTMP URL
-  const targetUrl = getIngestUrl(platform, cleanedKey, customRtmpUrl);
-
-  const videoDisplayName = resolvedVideo.startsWith('http') ? resolvedVideo : path.basename(resolvedVideo);
-  const logs: string[] = [];
-  logs.push(`[${new Date().toLocaleTimeString()}] Stream LIVE 24/7 Cloud Worker initiating live stream for slot ${slotId}`);
-  logs.push(`[${new Date().toLocaleTimeString()}] Platform: ${platform} | Destination: ${targetUrl.replace(cleanedKey, '***' + cleanedKey.slice(-4))}`);
-  logs.push(`[${new Date().toLocaleTimeString()}] Real Video source: ${videoDisplayName} (24/7 infinite loop active)`);
-  logs.push(`[${new Date().toLocaleTimeString()}] Target Quality: ${bitrateNum} Kbps CBR @ ${fpsNum} FPS | Audio: ${audioBitrateNum} Kbps AAC Stereo`);
-
-  // YouTube Live encoding settings:
+  // Continuous infinite looping flags:
   // -re: read input at real-time pacing
   // -stream_loop -1: continuous 24/7 infinite loop
-  // -c:v libx264: universally compatible H.264
-  // -b:v ${bitrateNum}k -minrate ${bitrateNum}k -maxrate ${bitrateNum}k -bufsize ${bitrateNum}k: Strict constant bitrate
-  // -x264-params "nal-hrd=cbr:force-cfr=1": Enforce CBR with filler packets so YouTube never gets low bitrate warning
-  // -r ${fpsNum}: Constant configured frame rate
-  // -g ${gopSize} -keyint_min ${gopSize}: exactly 2-second keyframes required by YouTube/Twitch
-  // -c:a aac -b:a ${audioBitrateNum}k -ar 44100 -ac 2: YouTube recommended stereo audio spec
-  // -flvflags no_duration_filesize -f flv: standard RTMP live FLV container
+  // -fflags +genpts+discardcorrupt: regenerate timestamps monotonically across loop cycles
+  // -avoid_negative_ts make_zero: avoid negative DTS jumps upon loop restart
   let ffmpegArgs: string[];
 
   if (hasAudio) {
     ffmpegArgs = [
       '-re',
       '-stream_loop', '-1',
+      '-fflags', '+genpts+discardcorrupt',
+      '-avoid_negative_ts', 'make_zero',
       '-i', resolvedVideo,
       '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
       '-c:v', 'libx264',
@@ -386,13 +461,14 @@ app.post('/api/stream/start', async (req, res) => {
       '-ac', '2',
       '-flvflags', 'no_duration_filesize',
       '-f', 'flv',
-      targetUrl,
+      rtmpTarget,
     ];
   } else {
-    // Input has no audio track: synthesize stereo audio so YouTube never shows "bitrate (0)" warning
     ffmpegArgs = [
       '-re',
       '-stream_loop', '-1',
+      '-fflags', '+genpts+discardcorrupt',
+      '-avoid_negative_ts', 'make_zero',
       '-i', resolvedVideo,
       '-f', 'lavfi',
       '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
@@ -412,32 +488,17 @@ app.post('/api/stream/start', async (req, res) => {
       '-ac', '2',
       '-map', '0:v:0',
       '-map', '1:a:0',
-      '-shortest',
       '-flvflags', 'no_duration_filesize',
       '-f', 'flv',
-      targetUrl,
+      rtmpTarget,
     ];
   }
 
   const child = spawn(getFfmpegPath(), ffmpegArgs);
-  console.log(`[Slot ${slotId}] FFmpeg process spawned (PID: ${child.pid})`);
-  console.log(`[Slot ${slotId}] Destination: ${targetUrl.replace(cleanedKey, '***' + cleanedKey.slice(-4))}`);
-  console.log(`[Slot ${slotId}] Video input: ${resolvedVideo}`);
+  session.process = child;
+  session.status = 'starting';
 
-  const session: StreamSession = {
-    slotId,
-    streamKey,
-    platform,
-    rtmpTarget: targetUrl,
-    videoPath: resolvedVideo,
-    process: child,
-    startedAt: Date.now(),
-    status: 'starting',
-    logs,
-    lastStats: { fps: fpsNum, bitrate: `${bitrateNum}kbits/s`, frames: 0, speed: '0x' },
-  };
-
-  activeStreams.set(slotId, session);
+  console.log(`[Slot ${slotId}] FFmpeg spawned (PID: ${child.pid}). Looping: infinite until time lapsed.`);
 
   child.on('error', (err) => {
     console.error(`[Slot ${slotId}] FFmpeg process error:`, err);
@@ -464,10 +525,10 @@ app.post('/api/stream/start', async (req, res) => {
       ) {
         console.error(`[Slot ${slotId}] FFmpeg stderr:`, line);
       }
-      // Example: frame=  120 fps= 30 q=24.0 size=    1024kB time=00:00:04.00 bitrate=1048.5kbits/s speed=1.0x
       if (line.includes('frame=') && line.includes('bitrate=')) {
         session.status = 'live';
         session.lastError = undefined;
+        session.reconnectAttempts = 0;
 
         const fpsMatch = line.match(/fps=\s*([\d.]+)/);
         const bitrateMatch = line.match(/bitrate=\s*([\w./]+)/);
@@ -528,92 +589,138 @@ app.post('/api/stream/start', async (req, res) => {
     }
   });
 
-  child.on('close', (code) => {
-    session.status = code === 0 ? 'stopped' : 'error';
-    if (code !== 0 && !session.lastError) {
-      // Find the most meaningful error line from logs, explicitly skipping generic FFmpeg wrappers
-      const errorMsg = [...session.logs].reverse().find(l => {
-        const low = l.toLowerCase().trim();
-        // Skip generic FFmpeg summary lines
-        if (
-          low.startsWith('conversion failed') ||
-          low.startsWith('stream process ended') ||
-          low.includes('exited with code') ||
-          low === 'conversion failed!'
-        ) {
-          return false;
-        }
-        return (
-          low.includes('error') ||
-          low.includes('failed') ||
-          low.includes('invalid') ||
-          low.includes('rejected') ||
-          low.includes('denied') ||
-          low.includes('refused') ||
-          low.includes('handshake') ||
-          low.includes('end of file')
-        );
-      });
+  child.on('close', async (code) => {
+    console.log(`[Slot ${slotId}] FFmpeg process closed (code: ${code}). userRequestedStop: ${session.userRequestedStop}`);
 
-      if (errorMsg) {
-        const low = errorMsg.toLowerCase();
-        if (
-          low.includes('opening encoder') ||
-          low.includes('initializing output stream') ||
-          low.includes('bit_rate') ||
-          low.includes('width not divisible')
-        ) {
-          session.lastError = 'Video encoder error: Video dimensions or parameters were incompatible. Please use default 720p (2500 Kbps) settings or select a standard MP4 video.';
-        } else if (
-          low.includes('rtmp') ||
-          low.includes('handshake') ||
-          low.includes('end of file') ||
-          low.includes('connection') ||
-          low.includes('broken pipe') ||
-          low.includes('io error')
-        ) {
-          session.lastError = 'YouTube Live rejected connection: Invalid or inactive Stream Key. Please copy your active Stream Key from YouTube Studio (studio.youtube.com/channel/live) and ensure Live Streaming is enabled.';
-        } else {
-          session.lastError = `Stream failed: ${errorMsg}`;
+    // 1. If user explicitly stopped stream, terminate cleanly
+    if (session.userRequestedStop) {
+      session.status = 'stopped';
+      activeStreams.delete(slotId);
+      session.logs.push(`[${new Date().toLocaleTimeString()}] Live stream stopped by user.`);
+      return;
+    }
+
+    // 2. Check if slot time has lapsed (subscription expired)
+    let isExpired = false;
+    let expiresAtMs = 0;
+    try {
+      const slot = await getSlot(slotId);
+      if (slot) {
+        expiresAtMs = slot.expiresAt && slot.expiresAt > 0 ? slot.expiresAt : 0;
+        if (!expiresAtMs && slot.expireOn) {
+          const parsed = Date.parse(slot.expireOn.replace('-', ' '));
+          if (!isNaN(parsed) && parsed > 0) expiresAtMs = parsed;
         }
-      } else {
-        session.lastError = 'YouTube Live rejected connection: Invalid or inactive Stream Key. Please copy your active Stream Key from YouTube Studio (studio.youtube.com/channel/live) and paste it into the slot settings.';
+        if (slot.status === 'expired' || (expiresAtMs > 0 && expiresAtMs <= Date.now())) {
+          isExpired = true;
+        }
       }
-    }
-    console.log(`[Slot ${slotId}] FFmpeg process closed with code ${code}. Status: ${session.status}, Error: ${session.lastError || 'None'}`);
-    if (code !== 0 && session.logs.length > 0) {
-      console.log(`[Slot ${slotId}] Last FFmpeg logs before close:`);
-      session.logs.slice(-5).forEach(l => console.log(`   > ${l}`));
-    }
-    session.logs.push(`[${new Date().toLocaleTimeString()}] Stream process ended (code ${code})`);
-  });
+    } catch {}
 
-  return res.json({
-    success: true,
-    slotId,
-    pid: child.pid,
-    status: 'starting',
-    rtmpTarget: targetUrl.replace(streamKey.trim(), '***KEY***'),
-    videoSource: path.basename(resolvedVideo),
+    if (isExpired) {
+      console.log(`[Slot ${slotId}] Subscription time lapsed! Stopping live stream loop permanently.`);
+      session.status = 'stopped';
+      activeStreams.delete(slotId);
+      session.logs.push(`[${new Date().toLocaleTimeString()}] Stream ended: Slot subscription duration has elapsed (time lapsed).`);
+      await upsertSlot({ id: slotId, status: 'expired', streamStatus: 'Off' }).catch(() => {});
+      return;
+    }
+
+    // 3. Time NOT lapsed: Video stream must NOT stop! Auto-loop & reconnect to YouTube!
+    session.reconnectAttempts = (session.reconnectAttempts || 0) + 1;
+    session.status = 'starting';
+    const attempts = session.reconnectAttempts;
+    const delayMs = attempts > 15 ? 10000 : attempts > 5 ? 5000 : 1500;
+
+    session.logs.push(
+      `[${new Date().toLocaleTimeString()}] 24/7 video loop continuous active (reconnect #${session.reconnectAttempts}). Streaming nonstop until slot expires.`
+    );
+    console.log(`[Slot ${slotId}] Auto-reconnecting stream in ${delayMs / 1000}s (slot not expired)...`);
+
+    session.reconnectTimer = setTimeout(() => {
+      if (!session.userRequestedStop && activeStreams.has(slotId)) {
+        spawnFfmpegForSession(session);
+      }
+    }, delayMs);
   });
-});
+}
+
+async function startSessionForSlot(slot: any) {
+  if (!slot.streamKey || activeStreams.has(slot.id)) return;
+  const cleanedKey = cleanStreamKey(slot.streamKey);
+  if (!cleanedKey) return;
+
+  const bitrateNum = slot.targetBitrateKbps || 2500;
+  const fpsNum = slot.fpsPreset === 60 ? 60 : 30;
+  const audioBitrateNum = slot.audioBitrateKbps || 128;
+  const platform = slot.platform || 'YouTube';
+  const customRtmpUrl = slot.rtmpServerUrl;
+  const targetUrl = getIngestUrl(platform, cleanedKey, customRtmpUrl);
+
+  let videoPath = '';
+  if (slot.videoId) {
+    const v = await getVideo(slot.videoId);
+    if (v) videoPath = v.videoPath || v.videoUrl;
+  }
+  let resolvedVideo = resolveVideoFilePath(videoPath);
+  if (!resolvedVideo || (!resolvedVideo.startsWith('http') && !fs.existsSync(resolvedVideo))) {
+    resolvedVideo = path.resolve(__dirname, 'public/videos/lofi-chill.mp4');
+  }
+
+  const logs = [
+    `[${new Date().toLocaleTimeString()}] Resuming continuous 24/7 live stream for slot ${slot.id}`,
+    `[${new Date().toLocaleTimeString()}] Platform: ${platform} | Source: ${path.basename(resolvedVideo)}`,
+  ];
+
+  const session: StreamSession = {
+    slotId: slot.id,
+    streamKey: cleanedKey,
+    platform,
+    rtmpTarget: targetUrl,
+    videoPath: resolvedVideo,
+    customRtmpUrl,
+    targetBitrateKbps: bitrateNum,
+    fps: fpsNum,
+    audioBitrateKbps: audioBitrateNum,
+    process: null as any,
+    startedAt: Date.now(),
+    status: 'starting',
+    logs,
+    lastStats: { fps: fpsNum, bitrate: `${bitrateNum}kbits/s`, frames: 0, speed: '0x' },
+    userRequestedStop: false,
+    reconnectAttempts: 0,
+  };
+
+  activeStreams.set(slot.id, session);
+  spawnFfmpegForSession(session);
+}
 
 // 2. Stop Live Stream
-app.post('/api/stream/stop', (req, res) => {
+app.post('/api/stream/stop', async (req, res) => {
   const { slotId } = req.body;
   if (!slotId) return res.status(400).json({ error: 'slotId required' });
 
   const session = activeStreams.get(slotId);
-  if (!session) {
-    return res.json({ success: true, message: 'Stream was not running' });
+  if (session) {
+    session.userRequestedStop = true;
+    if (session.reconnectTimer) {
+      clearTimeout(session.reconnectTimer);
+      session.reconnectTimer = undefined;
+    }
+    try {
+      session.process.kill('SIGTERM');
+    } catch {}
+    session.status = 'stopped';
+    activeStreams.delete(slotId);
   }
 
+  // Update slot in DB to Off
   try {
-    session.process.kill('SIGTERM');
+    const s = await getSlot(slotId);
+    if (s) {
+      await upsertSlot({ ...s, streamStatus: 'Off' });
+    }
   } catch {}
-
-  session.status = 'stopped';
-  activeStreams.delete(slotId);
 
   return res.json({ success: true, message: 'Stream stopped successfully' });
 });
@@ -2063,6 +2170,28 @@ async function startServer() {
         console.warn('[YouTube Optimizer] Startup check error:', err);
       }
     }, 3000);
+
+    // Resume any active unexpired live streams
+    setTimeout(async () => {
+      try {
+        const allSlots = await getSlots();
+        const now = Date.now();
+        for (const slot of allSlots) {
+          let expiresAtMs = slot.expiresAt && slot.expiresAt > 0 ? slot.expiresAt : 0;
+          if (!expiresAtMs && slot.expireOn) {
+            const parsed = Date.parse(slot.expireOn.replace('-', ' '));
+            if (!isNaN(parsed) && parsed > 0) expiresAtMs = parsed;
+          }
+          const isExpired = slot.status === 'expired' || (expiresAtMs > 0 && expiresAtMs <= now);
+          if (!isExpired && slot.streamStatus === 'Live' && slot.streamKey && !activeStreams.has(slot.id)) {
+            console.log(`[Auto-Resume] Resuming 24/7 continuous stream for slot ${slot.id} ("${slot.name}")...`);
+            startSessionForSlot(slot);
+          }
+        }
+      } catch (err) {
+        console.warn('[Auto-Resume] Startup check error:', err);
+      }
+    }, 4500);
   });
 }
 
