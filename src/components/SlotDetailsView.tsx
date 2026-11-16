@@ -81,7 +81,7 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
     slot?.audioBitrateKbps ?? 128
   );
   const [qualityPreset, setQualityPreset] = useState<string>(
-    slot?.qualityPresetName ?? (slot?.targetBitrateKbps === 5000 ? '1080p-5000' : slot?.targetBitrateKbps === 4500 ? '1080p-4500' : slot?.targetBitrateKbps === 8000 ? '2k-8000' : slot?.targetBitrateKbps && slot?.targetBitrateKbps !== 2500 ? 'custom' : '720p-2500')
+    slot?.qualityPresetName ?? (slot?.targetBitrateKbps === 6800 ? '1080p-6800' : slot?.targetBitrateKbps === 5000 ? '1080p-5000' : slot?.targetBitrateKbps === 4500 ? '1080p-4500' : slot?.targetBitrateKbps === 8000 ? '2k-8000' : slot?.targetBitrateKbps && slot?.targetBitrateKbps !== 2500 ? 'custom' : '720p-2500')
   );
 
   // Stream Key Actions state
@@ -1301,9 +1301,9 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
               </label>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 {[
-                  { id: '720p-2500', name: '720p HD', bitrate: 2500, fps: 30, audio: 128, label: 'YouTube Rec Min' },
+                  { id: '720p-2500', name: '720p HD', bitrate: 2500, fps: 30, audio: 128, label: 'YouTube 720p Rec' },
                   { id: '1080p-4500', name: '1080p Standard', bitrate: 4500, fps: 30, audio: 128, label: 'Full HD 30fps' },
-                  { id: '1080p-5000', name: '1080p Pro', bitrate: 5000, fps: 60, audio: 160, label: 'YouTube 60fps' },
+                  { id: '1080p-6800', name: '1080p Pro', bitrate: 6800, fps: 60, audio: 160, label: 'YouTube Rec (6.8 Mbps)' },
                   { id: '2k-8000', name: '2K / Ultra', bitrate: 8000, fps: 60, audio: 192, label: 'Max Fidelity' },
                 ].map((preset) => {
                   const isSelected = targetBitrateKbps === preset.bitrate && fpsPreset === preset.fps;
@@ -1344,7 +1344,7 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
                   <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                     <span>Target Video Bitrate</span>
                     <span className="text-[10px] font-normal text-slate-500 dark:text-slate-400">
-                      (YouTube recommends 2500 - 6000 Kbps)
+                      (YouTube recommends 4500 - 9000 Kbps for 1080p, 6800 Kbps target)
                     </span>
                   </label>
                   <div className="flex items-center gap-1">
@@ -1373,9 +1373,9 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
 
                 <div className="flex justify-between text-[10px] text-slate-400 mt-1 font-mono">
                   <span>1500k</span>
-                  <span className="text-emerald-500 font-bold">2500k (Rec)</span>
-                  <span className="text-purple-400 font-bold">5000k</span>
-                  <span>8000k</span>
+                  <span className="text-slate-400">2500k (720p)</span>
+                  <span className="text-purple-400 font-bold">4500k</span>
+                  <span className="text-emerald-500 font-bold">6800k (YouTube Rec)</span>
                   <span>10000k</span>
                 </div>
 
@@ -1387,11 +1387,11 @@ export const SlotDetailsView: React.FC<SlotDetailsViewProps> = ({
                       <strong className="text-amber-600 dark:text-amber-400">
                         Bitrate is below 2500 Kbps: YouTube Live will show a "bitrate lower than recommended" warning.
                       </strong>
-                    ) : targetBitrateKbps <= 3500 ? (
-                      <span>Optimal 720p HD streaming. Strictly maintains constant 2500+ Kbps so YouTube never gives warnings.</span>
-                    ) : targetBitrateKbps <= 6000 ? (
+                    ) : targetBitrateKbps < 4500 ? (
+                      <span>Good for 720p HD. Note: If streaming 1080p, YouTube Studio will recommend 6800 Kbps.</span>
+                    ) : targetBitrateKbps <= 6800 ? (
                       <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                        Excellent 1080p Full HD broadcast bitrate. Delivers ultra crisp 60fps video quality.
+                        ✓ Optimal YouTube Full HD broadcast bitrate (6800 Kbps). Clears YouTube Studio low-bitrate warning and delivers ultra crisp 60fps video quality.
                       </span>
                     ) : (
                       <span>Ultra high-bitrate broadcast. Delivers master studio fidelity for high-motion content.</span>
