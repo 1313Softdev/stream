@@ -189,8 +189,9 @@ export const LiveStreamSimulatorModal: React.FC<LiveStreamSimulatorModalProps> =
     }
   };
 
-  const isLive = telemetry?.status === 'live';
-  const isStarting = telemetry?.status === 'starting';
+  const isSlotLive = slot.streamStatus === 'Live';
+  const isLive = telemetry?.status === 'live' || (isSlotLive && telemetry?.isRunning && telemetry?.status !== 'error');
+  const isStarting = telemetry?.status === 'starting' || (isSlotLive && (!telemetry || telemetry?.status === 'off'));
   const isError = telemetry?.status === 'error';
 
   return (
@@ -228,7 +229,7 @@ export const LiveStreamSimulatorModal: React.FC<LiveStreamSimulatorModalProps> =
                   ? 'bg-red-900 text-red-200'
                   : 'bg-slate-700 text-slate-300'
               }`}>
-                {telemetry?.status || 'Active'}
+                {isLive ? 'LIVE' : isStarting ? 'STARTING' : isError ? (telemetry?.status?.toUpperCase() || 'ERROR') : (isSlotLive ? 'LIVE' : 'OFF')}
               </span>
             </div>
           </div>
@@ -314,7 +315,7 @@ export const LiveStreamSimulatorModal: React.FC<LiveStreamSimulatorModalProps> =
                     : 'bg-slate-800 text-slate-200'
                 }`}>
                   <Radio className="w-3 h-3" />
-                  <span>{isLive ? 'ON AIR' : isStarting ? 'STARTING...' : 'BROADCASTING'}</span>
+                  <span>{isLive ? 'ON AIR' : isStarting ? 'STARTING...' : isSlotLive ? 'ON AIR' : 'OFF AIR'}</span>
                 </span>
                 <span className="bg-black/80 backdrop-blur-xs text-slate-300 text-xs px-2.5 py-1 rounded font-mono">
                   {slot.platform} Live
@@ -336,9 +337,9 @@ export const LiveStreamSimulatorModal: React.FC<LiveStreamSimulatorModalProps> =
               <div className="flex flex-col">
                 <span className="text-slate-400">Encoder Status</span>
                 <span className={`font-semibold capitalize mt-0.5 ${
-                  isLive ? 'text-emerald-400' : isStarting ? 'text-amber-400' : 'text-slate-300'
+                  isLive ? 'text-emerald-400' : isStarting ? 'text-amber-400' : isError ? 'text-red-400' : 'text-slate-300'
                 }`}>
-                  {telemetry?.status || 'Running'}
+                  {isLive ? 'Live' : isStarting ? 'Starting' : telemetry?.status || (isSlotLive ? 'Connecting' : 'Off')}
                 </span>
               </div>
               <div className="flex flex-col border-l border-slate-800">

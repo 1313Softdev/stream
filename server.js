@@ -2303,9 +2303,15 @@ function spawnFfmpegForSession(session) {
   });
   child.on("close", async (code) => {
     console.log(`[Slot ${slotId}] FFmpeg process closed (code: ${code}). userRequestedStop: ${session.userRequestedStop}`);
+    if (activeStreams.get(slotId) !== session) {
+      console.log(`[Slot ${slotId}] Ignoring close event from superseded session.`);
+      return;
+    }
     if (session.userRequestedStop) {
       session.status = "stopped";
-      activeStreams.delete(slotId);
+      if (activeStreams.get(slotId) === session) {
+        activeStreams.delete(slotId);
+      }
       session.logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Live stream stopped by user.`);
       return;
     }
@@ -2328,7 +2334,9 @@ function spawnFfmpegForSession(session) {
     if (isExpired) {
       console.log(`[Slot ${slotId}] Subscription time lapsed! Stopping live stream loop permanently.`);
       session.status = "stopped";
-      activeStreams.delete(slotId);
+      if (activeStreams.get(slotId) === session) {
+        activeStreams.delete(slotId);
+      }
       session.logs.push(`[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Stream ended: Slot subscription duration has elapsed (time lapsed).`);
       await upsertSlot({ id: slotId, status: "expired", streamStatus: "Off" }).catch(() => {
       });
@@ -2343,14 +2351,17 @@ function spawnFfmpegForSession(session) {
     );
     console.log(`[Slot ${slotId}] Auto-reconnecting stream in ${delayMs / 1e3}s (slot not expired)...`);
     session.reconnectTimer = setTimeout(() => {
-      if (!session.userRequestedStop && activeStreams.has(slotId)) {
+      if (!session.userRequestedStop) {
+        activeStreams.set(slotId, session);
         spawnFfmpegForSession(session);
       }
     }, delayMs);
   });
 }
 async function startSessionForSlot(slot) {
-  if (!slot.streamKey || activeStreams.has(slot.id)) return;
+  if (!slot.streamKey) return;
+  const existing = activeStreams.get(slot.id);
+  if (existing && !existing.userRequestedStop) return;
   const cleanedKey = cleanStreamKey(slot.streamKey);
   if (!cleanedKey) return;
   const bitrateNum = slot.targetBitrateKbps || 2500;
@@ -2466,9 +2477,29 @@ setInterval(async () => {
   } catch (err) {
   }
 }, 1e4);
-app.get("/api/stream/status/:slotId", (req, res) => {
+app.get("/api/stream/status/:slotId", async (req, res) => {
   const { slotId } = req.params;
-  const session = activeStreams.get(slotId);
+  let session = activeStreams.get(slotId);
+  if (!session) {
+    try {
+      const slot = await getSlot(slotId);
+      if (slot && slot.streamStatus === "Live" && slot.streamKey) {
+        let expiresAtMs = slot.expiresAt && slot.expiresAt > 0 ? slot.expiresAt : 0;
+        if (!expiresAtMs && slot.expireOn) {
+          const parsed = Date.parse(slot.expireOn.replace("-", " "));
+          if (!isNaN(parsed) && parsed > 0) expiresAtMs = parsed;
+        }
+        const isExpired = slot.status === "expired" || expiresAtMs > 0 && expiresAtMs <= Date.now();
+        if (!isExpired) {
+          console.log(`[Stream Status] Slot ${slotId} is Live in DB. Auto-resuming session...`);
+          await startSessionForSlot(slot);
+          session = activeStreams.get(slotId);
+        }
+      }
+    } catch (e) {
+      console.warn("[Stream Status] Auto-resume check error:", e);
+    }
+  }
   if (!session) {
     return res.json({
       isRunning: false,
