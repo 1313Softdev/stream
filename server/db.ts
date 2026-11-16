@@ -314,6 +314,15 @@ async function createTables(targetPool: mysql.Pool) {
   try {
     await targetPool.query('ALTER TABLE videos ADD COLUMN user_id VARCHAR(64) NULL AFTER id');
   } catch {}
+  try {
+    await targetPool.query('ALTER TABLE videos ADD COLUMN status VARCHAR(50) DEFAULT "ready"');
+  } catch {}
+  try {
+    await targetPool.query('ALTER TABLE videos ADD COLUMN processing_message TEXT NULL');
+  } catch {}
+  try {
+    await targetPool.query('ALTER TABLE videos ADD COLUMN processed_for_youtube BOOLEAN DEFAULT TRUE');
+  } catch {}
 
   // Orders table
   await targetPool.query(`
@@ -1706,6 +1715,9 @@ function mapVideoRow(r: any) {
     videoUrl: r.video_url,
     videoPath: r.video_path,
     category: r.category,
+    status: r.status || 'ready',
+    processingMessage: r.processing_message || undefined,
+    processedForYouTube: r.processed_for_youtube === 1 || r.processed_for_youtube === true,
     createdAt: r.created_at ? new Date(r.created_at).toLocaleDateString() : undefined,
   };
 }
@@ -1713,9 +1725,9 @@ function mapVideoRow(r: any) {
 export async function getVideos(userId?: string) {
   if (pool && isConnected) {
     try {
-      if (userId) {
+      if (userId && userId !== 'usr_guest') {
         const [rows] = await pool.query<mysql.RowDataPacket[]>(
-          'SELECT * FROM videos WHERE user_id = ? ORDER BY created_at DESC',
+          'SELECT * FROM videos WHERE user_id = ? OR user_id IS NULL OR user_id = "usr_guest" ORDER BY created_at DESC',
           [userId]
         );
         return rows.map(mapVideoRow);
@@ -1728,7 +1740,9 @@ export async function getVideos(userId?: string) {
     }
   }
   const all = Array.from(memoryFallback.videos.values());
-  return userId ? all.filter((v: any) => v.userId === userId) : all;
+  return userId && userId !== 'usr_guest'
+    ? all.filter((v: any) => !v.userId || v.userId === userId || v.userId === 'usr_guest')
+    : all;
 }
 
 export async function getVideo(id: string) {
@@ -1751,8 +1765,8 @@ export async function upsertVideo(video: any) {
       await pool.query(
         `INSERT INTO videos (
           id, user_id, title, duration, size_bytes, size_formatted, resolution,
-          thumbnail_url, video_url, video_path, category
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          thumbnail_url, video_url, video_path, category, status, processing_message, processed_for_youtube
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           user_id = COALESCE(VALUES(user_id), user_id),
           title = VALUES(title),
@@ -1763,7 +1777,10 @@ export async function upsertVideo(video: any) {
           thumbnail_url = VALUES(thumbnail_url),
           video_url = VALUES(video_url),
           video_path = VALUES(video_path),
-          category = VALUES(category)`,
+          category = VALUES(category),
+          status = VALUES(status),
+          processing_message = VALUES(processing_message),
+          processed_for_youtube = VALUES(processed_for_youtube)`,
         [
           video.id,
           video.userId || null,
@@ -1776,6 +1793,9 @@ export async function upsertVideo(video: any) {
           video.videoUrl,
           video.videoPath || null,
           video.category || 'General',
+          video.status || 'ready',
+          video.processingMessage || null,
+          video.processedForYouTube ?? true,
         ]
       );
 

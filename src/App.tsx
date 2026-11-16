@@ -381,8 +381,21 @@ export default function App() {
         // 3. Fetch videos from MySQL strictly for this user (never expose other users' database videos)
         const remoteVideos = await fetchVideos(targetUserId);
         if (isMounted) {
-          setVideos(remoteVideos || []);
-          localStorage.setItem(`streamadda_videos_${targetUserId}`, JSON.stringify(remoteVideos || []));
+          if (remoteVideos && remoteVideos.length > 0) {
+            setVideos(remoteVideos);
+            localStorage.setItem(`streamadda_videos_${targetUserId}`, JSON.stringify(remoteVideos));
+          } else {
+            const cached = localStorage.getItem(`streamadda_videos_${targetUserId}`);
+            if (cached) {
+              try {
+                const parsed = JSON.parse(cached);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                  setVideos(parsed);
+                  parsed.forEach((pv: any) => saveVideo(pv).catch(() => {}));
+                }
+              } catch {}
+            }
+          }
         }
 
         // 4. Fetch site settings & apply SEO meta tags dynamically
@@ -857,6 +870,14 @@ export default function App() {
     );
   };
 
+  const handleUpdateVideo = (updatedVideo: VideoItem) => {
+    setVideos((prev) => {
+      const updated = prev.map((v) => (v.id === updatedVideo.id ? updatedVideo : v));
+      localStorage.setItem(`streamadda_videos_${user.id}`, JSON.stringify(updated));
+      return updated;
+    });
+  };
+
   // Billing renewal/add with Subscription Plan and Payment Approval
   const handleRenewSlot = (slotId: string, period: BillingPeriod, count: number, utrNumber?: string) => {
     const isUserAdmin = user?.role === 'admin';
@@ -1225,6 +1246,28 @@ export default function App() {
                 user={user}
                 onAddVideo={handleAddVideo}
                 onDeleteVideo={handleDeleteVideo}
+                onUpdateVideo={handleUpdateVideo}
+                onRefreshVideos={async () => {
+                  try {
+                    const fresh = await fetchVideos(user?.id);
+                    if (fresh && fresh.length > 0) {
+                      setVideos((prev) => {
+                        const freshMap = new Map(fresh.map((v) => [v.id, v]));
+                        const merged = prev.map((p) => freshMap.get(p.id) || p);
+                        for (const f of fresh) {
+                          if (!merged.some((m) => m.id === f.id)) {
+                            merged.unshift(f);
+                          }
+                        }
+                        localStorage.setItem(`streamadda_videos_${user.id}`, JSON.stringify(merged));
+                        return merged;
+                      });
+                    }
+                  } catch (e) {
+                    console.warn('Failed to refresh videos:', e);
+                  }
+                }}
+                onOpenContact={() => setIsContactOpen(true)}
               />
             )}
 

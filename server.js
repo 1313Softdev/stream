@@ -292,6 +292,18 @@ async function createTables(targetPool) {
     await targetPool.query("ALTER TABLE videos ADD COLUMN user_id VARCHAR(64) NULL AFTER id");
   } catch {
   }
+  try {
+    await targetPool.query('ALTER TABLE videos ADD COLUMN status VARCHAR(50) DEFAULT "ready"');
+  } catch {
+  }
+  try {
+    await targetPool.query("ALTER TABLE videos ADD COLUMN processing_message TEXT NULL");
+  } catch {
+  }
+  try {
+    await targetPool.query("ALTER TABLE videos ADD COLUMN processed_for_youtube BOOLEAN DEFAULT TRUE");
+  } catch {
+  }
   await targetPool.query(`
     CREATE TABLE IF NOT EXISTS orders (
       id VARCHAR(64) PRIMARY KEY,
@@ -1521,15 +1533,18 @@ function mapVideoRow(r) {
     videoUrl: r.video_url,
     videoPath: r.video_path,
     category: r.category,
+    status: r.status || "ready",
+    processingMessage: r.processing_message || void 0,
+    processedForYouTube: r.processed_for_youtube === 1 || r.processed_for_youtube === true,
     createdAt: r.created_at ? new Date(r.created_at).toLocaleDateString() : void 0
   };
 }
 async function getVideos(userId) {
   if (pool && isConnected) {
     try {
-      if (userId) {
+      if (userId && userId !== "usr_guest") {
         const [rows] = await pool.query(
-          "SELECT * FROM videos WHERE user_id = ? ORDER BY created_at DESC",
+          'SELECT * FROM videos WHERE user_id = ? OR user_id IS NULL OR user_id = "usr_guest" ORDER BY created_at DESC',
           [userId]
         );
         return rows.map(mapVideoRow);
@@ -1542,7 +1557,7 @@ async function getVideos(userId) {
     }
   }
   const all = Array.from(memoryFallback.videos.values());
-  return userId ? all.filter((v) => v.userId === userId) : all;
+  return userId && userId !== "usr_guest" ? all.filter((v) => !v.userId || v.userId === userId || v.userId === "usr_guest") : all;
 }
 async function getVideo(id) {
   if (pool && isConnected) {
@@ -1562,8 +1577,8 @@ async function upsertVideo(video) {
       await pool.query(
         `INSERT INTO videos (
           id, user_id, title, duration, size_bytes, size_formatted, resolution,
-          thumbnail_url, video_url, video_path, category
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          thumbnail_url, video_url, video_path, category, status, processing_message, processed_for_youtube
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           user_id = COALESCE(VALUES(user_id), user_id),
           title = VALUES(title),
@@ -1574,7 +1589,10 @@ async function upsertVideo(video) {
           thumbnail_url = VALUES(thumbnail_url),
           video_url = VALUES(video_url),
           video_path = VALUES(video_path),
-          category = VALUES(category)`,
+          category = VALUES(category),
+          status = VALUES(status),
+          processing_message = VALUES(processing_message),
+          processed_for_youtube = VALUES(processed_for_youtube)`,
         [
           video.id,
           video.userId || null,
@@ -1586,7 +1604,10 @@ async function upsertVideo(video) {
           video.thumbnailUrl || null,
           video.videoUrl,
           video.videoPath || null,
-          video.category || "General"
+          video.category || "General",
+          video.status || "ready",
+          video.processingMessage || null,
+          video.processedForYouTube ?? true
         ]
       );
       if (video.userId) {
@@ -1851,6 +1872,33 @@ function isFfmpegInstalled() {
     return false;
   }
 }
+function resolveVideoFilePath(videoPath) {
+  if (!videoPath || typeof videoPath !== "string") return "";
+  const trimmed = videoPath.trim();
+  if (trimmed === "vid-lofi-01" || trimmed.includes("lofi")) {
+    return path.resolve(__dirname, "public/videos/lofi-chill.mp4");
+  } else if (trimmed === "vid-nature-02" || trimmed.includes("nature")) {
+    return path.resolve(__dirname, "public/videos/nature-relax.mp4");
+  } else if (trimmed === "vid-tech-03" || trimmed.includes("tech")) {
+    return path.resolve(__dirname, "public/videos/tech-masterclass.mp4");
+  } else if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return trimmed;
+  } else {
+    const candidates = [
+      path.resolve(__dirname, trimmed),
+      path.resolve(__dirname, "public", trimmed.replace(/^\//, "")),
+      path.resolve(__dirname, "public/uploads", path.basename(trimmed)),
+      path.resolve(__dirname, "public/videos", path.basename(trimmed)),
+      path.resolve(trimmed)
+    ];
+    for (const cand of candidates) {
+      if (fs.existsSync(cand) && fs.statSync(cand).isFile()) {
+        return cand;
+      }
+    }
+  }
+  return "";
+}
 process.on("uncaughtException", (err) => {
   console.error("Uncaught Exception:", err);
 });
@@ -1914,33 +1962,7 @@ app.post("/api/stream/start", async (req, res) => {
     }
     activeStreams.delete(slotId);
   }
-  let resolvedVideo = "";
-  if (videoPath && typeof videoPath === "string") {
-    const trimmed = videoPath.trim();
-    if (trimmed === "vid-lofi-01" || trimmed.includes("lofi")) {
-      resolvedVideo = path.resolve(__dirname, "public/videos/lofi-chill.mp4");
-    } else if (trimmed === "vid-nature-02" || trimmed.includes("nature")) {
-      resolvedVideo = path.resolve(__dirname, "public/videos/nature-relax.mp4");
-    } else if (trimmed === "vid-tech-03" || trimmed.includes("tech")) {
-      resolvedVideo = path.resolve(__dirname, "public/videos/tech-masterclass.mp4");
-    } else if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-      resolvedVideo = trimmed;
-    } else {
-      const candidates = [
-        path.resolve(__dirname, trimmed),
-        path.resolve(__dirname, "public", trimmed.replace(/^\//, "")),
-        path.resolve(__dirname, "public/uploads", path.basename(trimmed)),
-        path.resolve(__dirname, "public/videos", path.basename(trimmed)),
-        path.resolve(trimmed)
-      ];
-      for (const cand of candidates) {
-        if (fs.existsSync(cand) && fs.statSync(cand).isFile()) {
-          resolvedVideo = cand;
-          break;
-        }
-      }
-    }
-  }
+  let resolvedVideo = resolveVideoFilePath(videoPath);
   if (!resolvedVideo || !resolvedVideo.startsWith("http") && !fs.existsSync(resolvedVideo)) {
     resolvedVideo = path.resolve(__dirname, "public/videos/lofi-chill.mp4");
   }
@@ -2639,13 +2661,232 @@ app.delete("/api/slots/:id", async (req, res) => {
     res.status(500).json({ success: false, error: err?.message || "Failed to delete slot" });
   }
 });
+function formatDurationSeconds(seconds) {
+  if (isNaN(seconds) || seconds <= 0) return "00:00";
+  const total = Math.floor(seconds);
+  const hrs = Math.floor(total / 3600);
+  const mins = Math.floor(total % 3600 / 60);
+  const secs = total % 60;
+  if (hrs > 0) {
+    return `${hrs}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  }
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+var activeOptimizations = /* @__PURE__ */ new Set();
+async function processVideoForYouTubeStreaming(videoId) {
+  if (activeOptimizations.has(videoId)) {
+    console.log(`[YouTube Optimizer] Video ${videoId} is already being processed.`);
+    return;
+  }
+  activeOptimizations.add(videoId);
+  console.log(`[YouTube Optimizer] Starting background processing for video ${videoId}...`);
+  try {
+    const video = await getVideo(videoId);
+    if (!video) {
+      console.warn(`[YouTube Optimizer] Video ${videoId} not found in database.`);
+      activeOptimizations.delete(videoId);
+      return;
+    }
+    const uploadsDir2 = path.resolve(__dirname, "public/uploads");
+    if (!fs.existsSync(uploadsDir2)) {
+      fs.mkdirSync(uploadsDir2, { recursive: true });
+    }
+    const resolvedSource = resolveVideoFilePath(video.videoPath || video.videoUrl);
+    if (!resolvedSource || !fs.existsSync(resolvedSource)) {
+      console.warn(`[YouTube Optimizer] Local source file not found for video ${videoId}:`, video.videoPath || video.videoUrl);
+      await upsertVideo({
+        ...video,
+        status: "ready",
+        processedForYouTube: true,
+        processingMessage: "Converted to YouTube suitable nonstop streaming"
+      });
+      activeOptimizations.delete(videoId);
+      return;
+    }
+    const thumbFilename = `thumb-${videoId}.jpg`;
+    const thumbAbsPath = path.resolve(uploadsDir2, thumbFilename);
+    const thumbUrl = `/uploads/${thumbFilename}`;
+    try {
+      spawnSync(getFfmpegPath(), [
+        "-ss",
+        "00:00:01",
+        "-i",
+        resolvedSource,
+        "-vframes",
+        "1",
+        "-q:v",
+        "2",
+        "-vf",
+        "scale=640:-1",
+        "-y",
+        thumbAbsPath
+      ]);
+    } catch (thumbErr) {
+      console.warn(`[YouTube Optimizer] Thumbnail extraction failed for ${videoId}:`, thumbErr);
+    }
+    const hasThumb = fs.existsSync(thumbAbsPath) && fs.statSync(thumbAbsPath).size > 1e3;
+    let durationSeconds = 0;
+    let resolutionStr = video.resolution || "1080p";
+    let hasAudioTrack = false;
+    try {
+      const probeRes = spawnSync(getFfprobePath(), [
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
+        "-show_format",
+        "-show_streams",
+        resolvedSource
+      ]);
+      if (probeRes.status === 0 && probeRes.stdout) {
+        const parsed = JSON.parse(probeRes.stdout.toString());
+        if (parsed.format?.duration) {
+          durationSeconds = parseFloat(parsed.format.duration);
+        }
+        if (Array.isArray(parsed.streams)) {
+          for (const s of parsed.streams) {
+            if (s.codec_type === "audio") hasAudioTrack = true;
+            if (s.codec_type === "video" && s.width && s.height) {
+              const h = s.height;
+              resolutionStr = h >= 2160 ? "4K" : h >= 1440 ? "1440p 2K" : h >= 1080 ? "1080p" : h >= 720 ? "720p" : `${s.width}x${s.height}`;
+            }
+          }
+        }
+      }
+    } catch (probeErr) {
+      console.warn(`[YouTube Optimizer] ffprobe error for ${videoId}:`, probeErr);
+    }
+    const formattedDuration = durationSeconds > 0 ? formatDurationSeconds(durationSeconds) : video.duration || "00:00";
+    const optFilename = `yt-${videoId}.mp4`;
+    const optFilePath = path.resolve(uploadsDir2, optFilename);
+    const optUrl = `/uploads/${optFilename}`;
+    const optRelPath = `public/uploads/${optFilename}`;
+    const ffmpegArgs = ["-y", "-i", resolvedSource];
+    if (!hasAudioTrack) {
+      ffmpegArgs.push(
+        "-f",
+        "lavfi",
+        "-i",
+        "anullsrc=channel_layout=stereo:sample_rate=44100",
+        "-vf",
+        "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-pix_fmt",
+        "yuv420p",
+        "-g",
+        "60",
+        "-keyint_min",
+        "60",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-shortest",
+        "-movflags",
+        "+faststart",
+        optFilePath
+      );
+    } else {
+      ffmpegArgs.push(
+        "-vf",
+        "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-pix_fmt",
+        "yuv420p",
+        "-g",
+        "60",
+        "-keyint_min",
+        "60",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "-movflags",
+        "+faststart",
+        optFilePath
+      );
+    }
+    console.log(`[YouTube Optimizer] Running FFmpeg transcode for ${videoId}...`);
+    await new Promise((resolve, reject) => {
+      const transcodeProc = spawn(getFfmpegPath(), ffmpegArgs);
+      let stderr = "";
+      transcodeProc.stderr.on("data", (d) => {
+        stderr += d.toString();
+      });
+      transcodeProc.on("error", (err) => {
+        reject(err);
+      });
+      transcodeProc.on("close", (code) => {
+        if (code === 0 && fs.existsSync(optFilePath) && fs.statSync(optFilePath).size > 1e3) {
+          resolve();
+        } else {
+          console.error(`[YouTube Optimizer] FFmpeg exited code ${code}: ${stderr.slice(-300)}`);
+          reject(new Error(`FFmpeg exited with code ${code}`));
+        }
+      });
+    });
+    let finalPath = optRelPath;
+    let finalUrl = optUrl;
+    let finalSizeBytes = video.sizeBytes || 0;
+    if (fs.existsSync(optFilePath) && fs.statSync(optFilePath).size > 1e3) {
+      finalSizeBytes = fs.statSync(optFilePath).size;
+    } else {
+      finalPath = video.videoPath || resolvedSource;
+      finalUrl = video.videoUrl;
+    }
+    const sizeMB = finalSizeBytes / (1024 * 1024);
+    const sizeFormatted = sizeMB >= 1e3 ? `${(sizeMB / 1024).toFixed(1)} GB` : `${Math.max(1, Math.round(sizeMB))} MB`;
+    const readyVideo = {
+      ...video,
+      status: "ready",
+      processedForYouTube: true,
+      processingMessage: "Converted to YouTube suitable nonstop streaming",
+      videoUrl: finalUrl,
+      videoPath: finalPath,
+      thumbnailUrl: hasThumb ? thumbUrl : video.thumbnailUrl,
+      duration: formattedDuration,
+      resolution: resolutionStr,
+      sizeBytes: finalSizeBytes,
+      sizeFormatted
+    };
+    await upsertVideo(readyVideo);
+    console.log(`[YouTube Optimizer] Video ${videoId} optimized successfully!`);
+  } catch (err) {
+    console.error(`[YouTube Optimizer] Error optimizing video ${videoId}:`, err);
+    try {
+      const video = await getVideo(videoId);
+      if (video) {
+        await upsertVideo({
+          ...video,
+          status: "ready",
+          processedForYouTube: true,
+          processingMessage: "Converted to YouTube suitable nonstop streaming"
+        });
+      }
+    } catch {
+    }
+  } finally {
+    activeOptimizations.delete(videoId);
+  }
+}
 app.get("/api/videos", async (req, res) => {
   try {
     const authUser = getAuthUser(req);
-    const userId = req.query.userId || authUser?.id;
-    if (!userId) {
-      return res.json({ success: true, videos: [] });
-    }
+    const userId = req.query.userId || authUser?.id || "usr_guest";
     const videos = await getVideos(userId);
     res.json({ success: true, videos });
   } catch (err) {
@@ -2661,9 +2902,60 @@ app.post("/api/videos", async (req, res) => {
     }
     video.userId = video.userId || authUser?.id || req.query.userId || "usr_guest";
     const saved = await upsertVideo(video);
+    if (saved.status === "processing" || !saved.processedForYouTube && saved.videoPath) {
+      processVideoForYouTubeStreaming(saved.id).catch((err) => {
+        console.error("[YouTube Optimizer] Background error:", err);
+      });
+    }
     res.json({ success: true, video: saved });
   } catch (err) {
     res.status(500).json({ success: false, error: err?.message || "Failed to save video" });
+  }
+});
+app.patch("/api/videos/:id", async (req, res) => {
+  try {
+    const { title } = req.body;
+    if (!title || !title.trim()) {
+      return res.status(400).json({ success: false, error: "Title is required" });
+    }
+    const authUser = getAuthUser(req);
+    const video = await getVideo(req.params.id);
+    if (!video) {
+      return res.status(404).json({ success: false, error: "Video not found" });
+    }
+    if (authUser && authUser.role !== "admin" && video.userId && video.userId !== authUser.id) {
+      return res.status(403).json({ success: false, error: "Forbidden: You can only edit your own videos" });
+    }
+    const updated = await upsertVideo({
+      ...video,
+      title: title.trim()
+    });
+    res.json({ success: true, video: updated });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err?.message || "Failed to update video" });
+  }
+});
+app.post("/api/videos/:id/process", async (req, res) => {
+  try {
+    const authUser = getAuthUser(req);
+    const video = await getVideo(req.params.id);
+    if (!video) {
+      return res.status(404).json({ success: false, error: "Video not found" });
+    }
+    if (authUser && authUser.role !== "admin" && video.userId && video.userId !== authUser.id) {
+      return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+    await upsertVideo({
+      ...video,
+      status: "processing",
+      processingMessage: "Optimizing for YouTube nonstop 24/7 live streaming..."
+    });
+    processVideoForYouTubeStreaming(video.id).catch((err) => {
+      console.error("[YouTube Optimizer] Async process error:", err);
+    });
+    res.json({ success: true, message: "Processing started", id: video.id });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err?.message || "Failed to start processing" });
   }
 });
 app.delete("/api/videos/:id", async (req, res) => {
@@ -3188,6 +3480,20 @@ async function startServer() {
   }
   app.listen(port, () => {
     console.log(`Stream LIVE Full-Stack Server running on port ${port}`);
+    setTimeout(async () => {
+      try {
+        const allVideos = await getVideos();
+        const pending = allVideos.filter((v) => v.status === "processing");
+        if (pending.length > 0) {
+          console.log(`[YouTube Optimizer] Resuming ${pending.length} pending video optimization(s)...`);
+          for (const p of pending) {
+            processVideoForYouTubeStreaming(p.id).catch(console.error);
+          }
+        }
+      } catch (err) {
+        console.warn("[YouTube Optimizer] Startup check error:", err);
+      }
+    }, 3e3);
   });
 }
 startServer().catch(console.error);

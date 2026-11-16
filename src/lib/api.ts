@@ -187,6 +187,26 @@ export async function deleteVideo(videoId: string): Promise<boolean> {
   return data.success;
 }
 
+export async function updateVideoTitle(videoId: string, title: string): Promise<VideoItem> {
+  const res = await fetch(`/api/videos/${videoId}`, {
+    method: 'PATCH',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ title }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return data.video;
+}
+
+export async function reprocessVideo(videoId: string): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`/api/videos/${videoId}/process`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json();
+}
+
 // Orders
 export async function fetchOrders(): Promise<any[]> {
   const res = await fetch('/api/orders', { headers: authHeaders() });

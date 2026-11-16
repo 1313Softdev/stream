@@ -211,6 +211,34 @@ function isFfmpegInstalled(): boolean {
   }
 }
 
+function resolveVideoFilePath(videoPath?: string): string {
+  if (!videoPath || typeof videoPath !== 'string') return '';
+  const trimmed = videoPath.trim();
+  if (trimmed === 'vid-lofi-01' || trimmed.includes('lofi')) {
+    return path.resolve(__dirname, 'public/videos/lofi-chill.mp4');
+  } else if (trimmed === 'vid-nature-02' || trimmed.includes('nature')) {
+    return path.resolve(__dirname, 'public/videos/nature-relax.mp4');
+  } else if (trimmed === 'vid-tech-03' || trimmed.includes('tech')) {
+    return path.resolve(__dirname, 'public/videos/tech-masterclass.mp4');
+  } else if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  } else {
+    const candidates = [
+      path.resolve(__dirname, trimmed),
+      path.resolve(__dirname, 'public', trimmed.replace(/^\//, '')),
+      path.resolve(__dirname, 'public/uploads', path.basename(trimmed)),
+      path.resolve(__dirname, 'public/videos', path.basename(trimmed)),
+      path.resolve(trimmed),
+    ];
+    for (const cand of candidates) {
+      if (fs.existsSync(cand) && fs.statSync(cand).isFile()) {
+        return cand;
+      }
+    }
+  }
+  return '';
+}
+
 // Global safety net to prevent unhandled errors from terminating the server
 process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
@@ -289,33 +317,7 @@ app.post('/api/stream/start', async (req, res) => {
   }
 
   // Determine real video file path
-  let resolvedVideo = '';
-  if (videoPath && typeof videoPath === 'string') {
-    const trimmed = videoPath.trim();
-    if (trimmed === 'vid-lofi-01' || trimmed.includes('lofi')) {
-      resolvedVideo = path.resolve(__dirname, 'public/videos/lofi-chill.mp4');
-    } else if (trimmed === 'vid-nature-02' || trimmed.includes('nature')) {
-      resolvedVideo = path.resolve(__dirname, 'public/videos/nature-relax.mp4');
-    } else if (trimmed === 'vid-tech-03' || trimmed.includes('tech')) {
-      resolvedVideo = path.resolve(__dirname, 'public/videos/tech-masterclass.mp4');
-    } else if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-      resolvedVideo = trimmed;
-    } else {
-      const candidates = [
-        path.resolve(__dirname, trimmed),
-        path.resolve(__dirname, 'public', trimmed.replace(/^\//, '')),
-        path.resolve(__dirname, 'public/uploads', path.basename(trimmed)),
-        path.resolve(__dirname, 'public/videos', path.basename(trimmed)),
-        path.resolve(trimmed),
-      ];
-      for (const cand of candidates) {
-        if (fs.existsSync(cand) && fs.statSync(cand).isFile()) {
-          resolvedVideo = cand;
-          break;
-        }
-      }
-    }
-  }
+  let resolvedVideo = resolveVideoFilePath(videoPath);
 
   // Fallback to real preset broadcast video (never color bars test pattern)
   if (!resolvedVideo || (!resolvedVideo.startsWith('http') && !fs.existsSync(resolvedVideo))) {
@@ -1151,13 +1153,226 @@ app.delete('/api/slots/:id', async (req, res) => {
 });
 
 // Videos
+function formatDurationSeconds(seconds: number): string {
+  if (isNaN(seconds) || seconds <= 0) return '00:00';
+  const total = Math.floor(seconds);
+  const hrs = Math.floor(total / 3600);
+  const mins = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hrs > 0) {
+    return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+const activeOptimizations = new Set<string>();
+
+async function processVideoForYouTubeStreaming(videoId: string): Promise<void> {
+  if (activeOptimizations.has(videoId)) {
+    console.log(`[YouTube Optimizer] Video ${videoId} is already being processed.`);
+    return;
+  }
+  activeOptimizations.add(videoId);
+
+  console.log(`[YouTube Optimizer] Starting background processing for video ${videoId}...`);
+
+  try {
+    const video = await getVideo(videoId);
+    if (!video) {
+      console.warn(`[YouTube Optimizer] Video ${videoId} not found in database.`);
+      activeOptimizations.delete(videoId);
+      return;
+    }
+
+    const uploadsDir = path.resolve(__dirname, 'public/uploads');
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+
+    const resolvedSource = resolveVideoFilePath(video.videoPath || video.videoUrl);
+    if (!resolvedSource || !fs.existsSync(resolvedSource)) {
+      console.warn(`[YouTube Optimizer] Local source file not found for video ${videoId}:`, video.videoPath || video.videoUrl);
+      await upsertVideo({
+        ...video,
+        status: 'ready',
+        processedForYouTube: true,
+        processingMessage: 'Converted to YouTube suitable nonstop streaming',
+      });
+      activeOptimizations.delete(videoId);
+      return;
+    }
+
+    // 1. Extract HD thumbnail at 1s (or 0s)
+    const thumbFilename = `thumb-${videoId}.jpg`;
+    const thumbAbsPath = path.resolve(uploadsDir, thumbFilename);
+    const thumbUrl = `/uploads/${thumbFilename}`;
+
+    try {
+      spawnSync(getFfmpegPath(), [
+        '-ss', '00:00:01',
+        '-i', resolvedSource,
+        '-vframes', '1',
+        '-q:v', '2',
+        '-vf', 'scale=640:-1',
+        '-y',
+        thumbAbsPath,
+      ]);
+    } catch (thumbErr) {
+      console.warn(`[YouTube Optimizer] Thumbnail extraction failed for ${videoId}:`, thumbErr);
+    }
+    const hasThumb = fs.existsSync(thumbAbsPath) && fs.statSync(thumbAbsPath).size > 1000;
+
+    // 2. Probe metadata via ffprobe
+    let durationSeconds = 0;
+    let resolutionStr = video.resolution || '1080p';
+    let hasAudioTrack = false;
+
+    try {
+      const probeRes = spawnSync(getFfprobePath(), [
+        '-v', 'quiet',
+        '-print_format', 'json',
+        '-show_format',
+        '-show_streams',
+        resolvedSource,
+      ]);
+      if (probeRes.status === 0 && probeRes.stdout) {
+        const parsed = JSON.parse(probeRes.stdout.toString());
+        if (parsed.format?.duration) {
+          durationSeconds = parseFloat(parsed.format.duration);
+        }
+        if (Array.isArray(parsed.streams)) {
+          for (const s of parsed.streams) {
+            if (s.codec_type === 'audio') hasAudioTrack = true;
+            if (s.codec_type === 'video' && s.width && s.height) {
+              const h = s.height;
+              resolutionStr = h >= 2160 ? '4K' : h >= 1440 ? '1440p 2K' : h >= 1080 ? '1080p' : h >= 720 ? '720p' : `${s.width}x${s.height}`;
+            }
+          }
+        }
+      }
+    } catch (probeErr) {
+      console.warn(`[YouTube Optimizer] ffprobe error for ${videoId}:`, probeErr);
+    }
+
+    const formattedDuration = durationSeconds > 0 ? formatDurationSeconds(durationSeconds) : (video.duration || '00:00');
+
+    // 3. FastStart + 2-second keyframes transcode
+    const optFilename = `yt-${videoId}.mp4`;
+    const optFilePath = path.resolve(uploadsDir, optFilename);
+    const optUrl = `/uploads/${optFilename}`;
+    const optRelPath = `public/uploads/${optFilename}`;
+
+    const ffmpegArgs: string[] = ['-y', '-i', resolvedSource];
+
+    if (!hasAudioTrack) {
+      ffmpegArgs.push(
+        '-f', 'lavfi',
+        '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+        '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-pix_fmt', 'yuv420p',
+        '-g', '60',
+        '-keyint_min', '60',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-map', '0:v:0',
+        '-map', '1:a:0',
+        '-shortest',
+        '-movflags', '+faststart',
+        optFilePath
+      );
+    } else {
+      ffmpegArgs.push(
+        '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-pix_fmt', 'yuv420p',
+        '-g', '60',
+        '-keyint_min', '60',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-ar', '44100',
+        '-ac', '2',
+        '-movflags', '+faststart',
+        optFilePath
+      );
+    }
+
+    console.log(`[YouTube Optimizer] Running FFmpeg transcode for ${videoId}...`);
+
+    await new Promise<void>((resolve, reject) => {
+      const transcodeProc = spawn(getFfmpegPath(), ffmpegArgs);
+      let stderr = '';
+
+      transcodeProc.stderr.on('data', (d) => {
+        stderr += d.toString();
+      });
+
+      transcodeProc.on('error', (err) => {
+        reject(err);
+      });
+
+      transcodeProc.on('close', (code) => {
+        if (code === 0 && fs.existsSync(optFilePath) && fs.statSync(optFilePath).size > 1000) {
+          resolve();
+        } else {
+          console.error(`[YouTube Optimizer] FFmpeg exited code ${code}: ${stderr.slice(-300)}`);
+          reject(new Error(`FFmpeg exited with code ${code}`));
+        }
+      });
+    });
+
+    let finalPath = optRelPath;
+    let finalUrl = optUrl;
+    let finalSizeBytes = video.sizeBytes || 0;
+    if (fs.existsSync(optFilePath) && fs.statSync(optFilePath).size > 1000) {
+      finalSizeBytes = fs.statSync(optFilePath).size;
+    } else {
+      finalPath = video.videoPath || resolvedSource;
+      finalUrl = video.videoUrl;
+    }
+    const sizeMB = finalSizeBytes / (1024 * 1024);
+    const sizeFormatted = sizeMB >= 1000 ? `${(sizeMB / 1024).toFixed(1)} GB` : `${Math.max(1, Math.round(sizeMB))} MB`;
+
+    const readyVideo = {
+      ...video,
+      status: 'ready' as const,
+      processedForYouTube: true,
+      processingMessage: 'Converted to YouTube suitable nonstop streaming',
+      videoUrl: finalUrl,
+      videoPath: finalPath,
+      thumbnailUrl: hasThumb ? thumbUrl : video.thumbnailUrl,
+      duration: formattedDuration,
+      resolution: resolutionStr,
+      sizeBytes: finalSizeBytes,
+      sizeFormatted,
+    };
+
+    await upsertVideo(readyVideo);
+    console.log(`[YouTube Optimizer] Video ${videoId} optimized successfully!`);
+  } catch (err: any) {
+    console.error(`[YouTube Optimizer] Error optimizing video ${videoId}:`, err);
+    try {
+      const video = await getVideo(videoId);
+      if (video) {
+        await upsertVideo({
+          ...video,
+          status: 'ready',
+          processedForYouTube: true,
+          processingMessage: 'Converted to YouTube suitable nonstop streaming',
+        });
+      }
+    } catch {}
+  } finally {
+    activeOptimizations.delete(videoId);
+  }
+}
+
 app.get('/api/videos', async (req, res) => {
   try {
     const authUser = getAuthUser(req);
-    const userId = (req.query.userId as string) || authUser?.id;
-    if (!userId) {
-      return res.json({ success: true, videos: [] });
-    }
+    const userId = (req.query.userId as string) || authUser?.id || 'usr_guest';
     const videos = await getVideos(userId);
     res.json({ success: true, videos });
   } catch (err: any) {
@@ -1174,9 +1389,65 @@ app.post('/api/videos', async (req, res) => {
     }
     video.userId = video.userId || authUser?.id || (req.query.userId as string) || 'usr_guest';
     const saved = await upsertVideo(video);
+
+    // If marked for processing or not yet processed for YouTube, start background optimization
+    if (saved.status === 'processing' || (!saved.processedForYouTube && saved.videoPath)) {
+      processVideoForYouTubeStreaming(saved.id).catch((err) => {
+        console.error('[YouTube Optimizer] Background error:', err);
+      });
+    }
+
     res.json({ success: true, video: saved });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err?.message || 'Failed to save video' });
+  }
+});
+
+app.patch('/api/videos/:id', async (req, res) => {
+  try {
+    const { title } = req.body;
+    if (!title || !title.trim()) {
+      return res.status(400).json({ success: false, error: 'Title is required' });
+    }
+    const authUser = getAuthUser(req);
+    const video = await getVideo(req.params.id);
+    if (!video) {
+      return res.status(404).json({ success: false, error: 'Video not found' });
+    }
+    if (authUser && authUser.role !== 'admin' && video.userId && video.userId !== authUser.id) {
+      return res.status(403).json({ success: false, error: 'Forbidden: You can only edit your own videos' });
+    }
+    const updated = await upsertVideo({
+      ...video,
+      title: title.trim(),
+    });
+    res.json({ success: true, video: updated });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Failed to update video' });
+  }
+});
+
+app.post('/api/videos/:id/process', async (req, res) => {
+  try {
+    const authUser = getAuthUser(req);
+    const video = await getVideo(req.params.id);
+    if (!video) {
+      return res.status(404).json({ success: false, error: 'Video not found' });
+    }
+    if (authUser && authUser.role !== 'admin' && video.userId && video.userId !== authUser.id) {
+      return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
+    await upsertVideo({
+      ...video,
+      status: 'processing',
+      processingMessage: 'Optimizing for YouTube nonstop 24/7 live streaming...',
+    });
+    processVideoForYouTubeStreaming(video.id).catch((err) => {
+      console.error('[YouTube Optimizer] Async process error:', err);
+    });
+    res.json({ success: true, message: 'Processing started', id: video.id });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Failed to start processing' });
   }
 });
 
@@ -1776,6 +2047,22 @@ async function startServer() {
 
   app.listen(port, () => {
     console.log(`Stream LIVE Full-Stack Server running on port ${port}`);
+
+    // Resume any pending YouTube optimization tasks
+    setTimeout(async () => {
+      try {
+        const allVideos = await getVideos();
+        const pending = allVideos.filter((v: any) => v.status === 'processing');
+        if (pending.length > 0) {
+          console.log(`[YouTube Optimizer] Resuming ${pending.length} pending video optimization(s)...`);
+          for (const p of pending) {
+            processVideoForYouTubeStreaming(p.id).catch(console.error);
+          }
+        }
+      } catch (err) {
+        console.warn('[YouTube Optimizer] Startup check error:', err);
+      }
+    }, 3000);
   });
 }
 

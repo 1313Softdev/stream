@@ -1,6 +1,7 @@
 export type SlotStatus = 'active' | 'expired' | 'inactive' | 'pending_approval';
 export type StreamStatus = 'Off' | 'Live' | 'Scheduled';
 export type StreamingPlatform = 'YouTube' | 'Facebook' | 'Twitch' | 'Custom RTMP';
+export type VideoProcessingStatus = 'processing' | 'ready' | 'failed';
 
 export interface VideoItem {
   id: string;
@@ -15,6 +16,9 @@ export interface VideoItem {
   videoPath?: string;
   createdAt: string;
   category?: string;
+  status?: VideoProcessingStatus;
+  processingMessage?: string;
+  processedForYouTube?: boolean;
 }
 
 export interface Slot {

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Video,
   Upload,
@@ -13,17 +13,24 @@ import {
   Check,
   Loader2,
   ArrowRight,
+  Pencil,
+  Info,
+  RotateCw,
 } from 'lucide-react';
 import { VideoItem, UserProfile } from '../types';
 import { PRESET_SAMPLE_VIDEOS } from '../config/presetVideos';
 import { extractVideoMetadata, storeLocalVideoBlob } from '../lib/videoStorage';
 import { uploadVideoToServer } from '../lib/streamingService';
+import { fetchVideos, updateVideoTitle, reprocessVideo } from '../lib/api';
 
 interface VideosViewProps {
   videos: VideoItem[];
   user?: UserProfile;
   onAddVideo: (video: VideoItem) => void;
   onDeleteVideo: (id: string) => void;
+  onUpdateVideo?: (video: VideoItem) => void;
+  onRefreshVideos?: () => Promise<void> | void;
+  onOpenContact?: () => void;
 }
 
 export const VideosView: React.FC<VideosViewProps> = ({
@@ -31,6 +38,9 @@ export const VideosView: React.FC<VideosViewProps> = ({
   user,
   onAddVideo,
   onDeleteVideo,
+  onUpdateVideo,
+  onRefreshVideos,
+  onOpenContact,
 }) => {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'upload' | 'preset'>('upload');
@@ -58,6 +68,99 @@ export const VideosView: React.FC<VideosViewProps> = ({
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Title editing state
+  const [editingVideoId, setEditingVideoId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
+  const [isSavingTitle, setIsSavingTitle] = useState(false);
+
+  // Completed conversion notice banner
+  const [completedNotice, setCompletedNotice] = useState<{ id: string; title: string } | null>(null);
+  const prevStatusesRef = useRef<Record<string, string>>({});
+
+  // Background polling while any video has status === 'processing'
+  useEffect(() => {
+    videos.forEach((v) => {
+      const prev = prevStatusesRef.current[v.id];
+      if (prev === 'processing' && v.status === 'ready') {
+        setCompletedNotice({ id: v.id, title: v.title });
+        setSuccessToast(`✓ "${v.title}" converted to YouTube suitable nonstop streaming!`);
+        setTimeout(() => setSuccessToast(null), 5000);
+      }
+      prevStatusesRef.current[v.id] = v.status || 'ready';
+    });
+
+    const hasProcessing = videos.some((v) => v.status === 'processing');
+    if (!hasProcessing) return;
+
+    const interval = setInterval(async () => {
+      try {
+        if (onRefreshVideos) {
+          await onRefreshVideos();
+        } else {
+          const fresh = await fetchVideos(user?.id);
+          fresh.forEach((f) => {
+            const prev = prevStatusesRef.current[f.id];
+            if (prev === 'processing' && f.status === 'ready') {
+              setCompletedNotice({ id: f.id, title: f.title });
+              setSuccessToast(`✓ "${f.title}" converted to YouTube suitable nonstop streaming!`);
+              setTimeout(() => setSuccessToast(null), 5000);
+              if (onUpdateVideo) onUpdateVideo(f);
+            }
+            prevStatusesRef.current[f.id] = f.status || 'ready';
+          });
+        }
+      } catch (err) {
+        console.warn('Polling error:', err);
+      }
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [videos, user?.id, onRefreshVideos, onUpdateVideo]);
+
+  const handleStartEdit = (video: VideoItem) => {
+    setEditingVideoId(video.id);
+    setEditingTitle(video.title);
+  };
+
+  const handleSaveTitle = async (videoId: string) => {
+    if (!editingTitle.trim()) return;
+    setIsSavingTitle(true);
+    try {
+      const updated = await updateVideoTitle(videoId, editingTitle.trim());
+      if (onUpdateVideo) {
+        onUpdateVideo(updated);
+      } else if (onRefreshVideos) {
+        await onRefreshVideos();
+      }
+      setSuccessToast(`Title updated to "${editingTitle.trim()}"`);
+      setTimeout(() => setSuccessToast(null), 3000);
+      setEditingVideoId(null);
+    } catch (err: any) {
+      console.error('Failed to update title:', err);
+      setErrorToast(err?.message || 'Failed to update title');
+      setTimeout(() => setErrorToast(null), 3000);
+    } finally {
+      setIsSavingTitle(false);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditingVideoId(null);
+    setEditingTitle('');
+  };
+
+  const handleReprocess = async (videoId: string) => {
+    try {
+      await reprocessVideo(videoId);
+      setSuccessToast('Started optimization for YouTube 24/7 streaming...');
+      setTimeout(() => setSuccessToast(null), 3000);
+      if (onRefreshVideos) await onRefreshVideos();
+    } catch (err: any) {
+      setErrorToast(err?.message || 'Failed to trigger optimization');
+      setTimeout(() => setErrorToast(null), 3000);
+    }
+  };
 
   // Storage calculations: user quota or default 10 GB
   const maxStorageBytes = user?.storageQuotaBytes || 10 * 1024 * 1024 * 1024;
@@ -192,7 +295,7 @@ export const VideosView: React.FC<VideosViewProps> = ({
     // Phase 3: Completed! ONLY NOW show 100% and ready state
     setUploadStage('completed');
     setUploadProgress(100);
-    setProcessingStage('✓ Video processed & ready! Added to library.');
+    setProcessingStage(selectedFile ? '✓ Video uploaded! Starting YouTube nonstop optimization...' : '✓ Video processed & ready! Added to library.');
 
     const newVideo: VideoItem = {
       id: videoId,
@@ -207,11 +310,16 @@ export const VideosView: React.FC<VideosViewProps> = ({
       ...(videoPath ? { videoPath } : {}),
       createdAt: 'Just now',
       category: 'Uploaded Stream',
+      status: selectedFile ? 'processing' : 'ready',
+      processedForYouTube: !selectedFile,
+      processingMessage: selectedFile
+        ? 'Optimizing for YouTube nonstop 24/7 live streaming...'
+        : 'Converted to YouTube suitable nonstop streaming',
     };
 
     onAddVideo(newVideo);
 
-    // Brief pause to display 100% complete state before modal dismiss
+    // Brief pause to display complete state before modal dismiss
     setTimeout(() => {
       setIsUploading(false);
       setShowUploadModal(false);
@@ -221,7 +329,11 @@ export const VideosView: React.FC<VideosViewProps> = ({
       setCustomUrl('');
       setUploadProgress(0);
 
-      setSuccessToast(`"${newVideo.title}" was uploaded and added to your 24/7 video library!`);
+      setSuccessToast(
+        selectedFile
+          ? `"${newVideo.title}" uploaded! Converting for YouTube nonstop streaming...`
+          : `"${newVideo.title}" was added to your 24/7 video library!`
+      );
       setTimeout(() => setSuccessToast(null), 4000);
     }, 450);
   };
@@ -273,7 +385,7 @@ export const VideosView: React.FC<VideosViewProps> = ({
         </div>
       )}
 
-      {/* Title & Storage Bar matching Screenshot 4 */}
+      {/* Title & Storage Bar & Upload button matching screenshot */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
           <div className="flex items-center gap-2">
@@ -288,34 +400,82 @@ export const VideosView: React.FC<VideosViewProps> = ({
           </div>
         </div>
 
-        {/* Storage Bar Indicator */}
-        <div className="flex flex-col gap-1.5 w-full md:w-80">
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-            <span className="font-semibold text-slate-700 dark:text-slate-300">
-              Storage
-            </span>
-            <span className="font-mono tabular-nums">
-              {usedGB} GB / {(maxStorageBytes / (1024 * 1024 * 1024)).toFixed(0)} GB
-            </span>
+        <div className="flex items-center gap-4 w-full md:w-auto">
+          {/* Storage Bar Indicator */}
+          <div className="flex flex-col gap-1.5 w-full md:w-72">
+            <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+              <span className="font-semibold text-slate-700 dark:text-slate-300">
+                Storage
+              </span>
+              <span className="font-mono tabular-nums">
+                {usedGB} GB / {(maxStorageBytes / (1024 * 1024 * 1024)).toFixed(0)} GB
+              </span>
+            </div>
+
+            <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-amber-500 rounded-full transition-all duration-300"
+                style={{ width: `${storagePercent}%` }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500">
+              <span>{availableGB} GB available</span>
+              <span>Max file: 2 GB</span>
+            </div>
           </div>
 
-          <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-[#6320ee] rounded-full transition-all duration-300"
-              style={{ width: `${storagePercent}%` }}
-            />
-          </div>
-
-          <div className="flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500">
-            <span>{availableGB} GB available</span>
-            <span>Max file: 2 GB</span>
-          </div>
+          {/* Upload Button matching screenshot */}
+          <button
+            onClick={() => setShowUploadModal(true)}
+            className="px-5 py-2 text-sm font-semibold text-white bg-[#6320ee] hover:bg-[#5218cc] rounded-lg shadow-xs transition-colors cursor-pointer flex items-center gap-2 shrink-0 self-center"
+          >
+            <Upload className="w-4 h-4" />
+            <span>Upload</span>
+          </button>
         </div>
       </div>
 
+      {/* Video Processing Info Banner matching user screenshot */}
+      <div className="w-full bg-[#fef7ea] dark:bg-amber-950/20 border border-[#fde1b6] dark:border-amber-800/60 rounded-xl px-4 py-3 flex items-start sm:items-center gap-3 text-xs sm:text-sm text-[#8c5000] dark:text-amber-200 shadow-2xs">
+        <Info className="w-4 h-4 text-[#d97706] shrink-0 mt-0.5 sm:mt-0" />
+        <div className="flex-1 leading-relaxed">
+          Video processing can take maximum 1 hour depending on the size and duration, most videos get processed within 10 minutes. Facing any issues? Please{' '}
+          <button
+            type="button"
+            onClick={onOpenContact}
+            className="font-bold underline hover:text-[#5c3400] dark:hover:text-amber-100 cursor-pointer inline"
+          >
+            Contact us.
+          </button>
+        </div>
+      </div>
+
+      {/* YouTube Optimization Completion Banner */}
+      {completedNotice && (
+        <div className="w-full bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800 rounded-xl px-4 py-3 flex items-center justify-between gap-3 text-xs sm:text-sm text-emerald-900 dark:text-emerald-200 shadow-sm animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <div>
+              <span className="font-bold">✓ Converted to YouTube suitable nonstop streaming!</span>{' '}
+              <span className="text-emerald-800 dark:text-emerald-300">
+                "{completedNotice.title}" is fully optimized with fast-start &amp; 24/7 keyframes. Ready for nonstop broadcast!
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={() => setCompletedNotice(null)}
+            className="p-1 text-emerald-700 hover:text-emerald-900 dark:text-emerald-300 rounded cursor-pointer"
+            title="Dismiss"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Main Content: Empty State or Video Grid */}
       {videos.length === 0 ? (
-        /* Empty State matching Screenshot 4 */
+        /* Empty State */
         <div className="w-full border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl flex flex-col items-center justify-center p-16 sm:p-24 text-center bg-white dark:bg-slate-900 shadow-2xs">
           <div className="w-20 h-20 rounded-2xl bg-slate-50 dark:bg-slate-800/60 text-slate-400 dark:text-slate-500 flex items-center justify-center mb-6">
             <Video className="w-10 h-10 stroke-1" />
@@ -353,61 +513,184 @@ export const VideosView: React.FC<VideosViewProps> = ({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {videos.map((video) => (
-              <div
-                key={video.id}
-                className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-xs group flex flex-col justify-between"
-              >
-                <div className="relative aspect-video bg-black overflow-hidden">
-                  <img
-                    src={video.thumbnailUrl}
-                    alt={video.title}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    referrerPolicy="no-referrer"
-                  />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                    <button
-                      onClick={() => setPreviewVideo(video)}
-                      className="w-12 h-12 rounded-full bg-white/90 text-[#6320ee] flex items-center justify-center shadow-lg hover:scale-110 transition-transform cursor-pointer"
-                    >
-                      <Play className="w-5 h-5 ml-0.5 fill-current" />
-                    </button>
-                  </div>
-                  <span className="absolute bottom-2 right-2 bg-black/80 backdrop-blur-xs text-xs font-mono text-white px-2 py-0.5 rounded">
-                    {video.duration}
-                  </span>
-                </div>
+            {videos.map((video) => {
+              const isProcessing = video.status === 'processing';
+              const isFailed = video.status === 'failed';
+              const isReady = !isProcessing && !isFailed;
 
-                <div className="p-4 flex flex-col gap-2">
-                  <h4 className="text-sm font-bold text-slate-900 dark:text-white line-clamp-1">
-                    {video.title}
-                  </h4>
-                  <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                    <span>{video.resolution}</span>
-                    <span>·</span>
-                    <span>{video.sizeFormatted}</span>
-                    <span>·</span>
-                    <span>{video.createdAt}</span>
+              return (
+                <div
+                  key={video.id}
+                  className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-xs group flex flex-col justify-between"
+                >
+                  <div className="relative aspect-video bg-slate-900 overflow-hidden">
+                    {/* Status Badge in top right matching screenshot */}
+                    <div className="absolute top-2.5 right-2.5 z-10">
+                      {isProcessing && (
+                        <span className="bg-[#f59e0b] text-white text-[11px] font-bold px-2.5 py-0.5 rounded-md shadow-md flex items-center gap-1.5">
+                          <Loader2 className="w-3 h-3 animate-spin stroke-[2.5]" />
+                          Processing
+                        </span>
+                      )}
+                      {isReady && video.processedForYouTube && (
+                        <span className="bg-emerald-600 text-white text-[11px] font-semibold px-2 py-0.5 rounded-md shadow-md flex items-center gap-1">
+                          <Check className="w-3 h-3 stroke-[3]" />
+                          YouTube 24/7 Ready
+                        </span>
+                      )}
+                      {isFailed && (
+                        <span className="bg-red-600 text-white text-[11px] font-semibold px-2 py-0.5 rounded-md shadow-md flex items-center gap-1">
+                          Failed
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Thumbnail Image or Processing Graphic matching screenshot */}
+                    {isProcessing ? (
+                      <div className="w-full h-full bg-[#1e293b] flex items-center justify-center relative">
+                        <div className="relative flex items-center justify-center">
+                          <div className="w-16 h-12 bg-[#334155] rounded-xl flex items-center justify-center shadow-inner">
+                            <Play className="w-6 h-6 text-slate-100 fill-slate-100 ml-0.5 opacity-90" />
+                          </div>
+                          <div className="absolute -bottom-2 -right-2 w-7 h-7 rounded-full bg-[#f59e0b] flex items-center justify-center shadow-md">
+                            <Upload className="w-3.5 h-3.5 text-slate-900 stroke-[2.5]" />
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <img
+                        src={video.thumbnailUrl}
+                        alt={video.title}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        referrerPolicy="no-referrer"
+                      />
+                    )}
+
+                    {!isProcessing && (
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <button
+                          onClick={() => setPreviewVideo(video)}
+                          className="w-12 h-12 rounded-full bg-white/90 text-[#6320ee] flex items-center justify-center shadow-lg hover:scale-110 transition-transform cursor-pointer"
+                        >
+                          <Play className="w-5 h-5 ml-0.5 fill-current" />
+                        </button>
+                      </div>
+                    )}
+
+                    <span className="absolute bottom-2 right-2 bg-black/80 backdrop-blur-xs text-xs font-mono text-white px-2 py-0.5 rounded">
+                      {video.duration || '00:00'}
+                    </span>
                   </div>
 
-                  <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-                    <button
-                      onClick={() => setPreviewVideo(video)}
-                      className="text-xs font-semibold text-[#6320ee] dark:text-[#a855f7] hover:underline cursor-pointer"
-                    >
-                      Preview Video
-                    </button>
-                    <button
-                      onClick={() => setVideoToDelete(video)}
-                      className="p-1.5 text-slate-400 hover:text-red-600 rounded-md hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
-                      title="Delete Video"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                  <div className="p-4 flex flex-col gap-2">
+                    {/* Title Row with inline edit (Pencil) & Delete (Trash) matching screenshot */}
+                    {editingVideoId === video.id ? (
+                      <div className="flex items-center gap-1.5 w-full">
+                        <input
+                          type="text"
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveTitle(video.id);
+                            if (e.key === 'Escape') handleCancelEdit();
+                          }}
+                          className="flex-1 px-2 py-1 text-xs font-semibold bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-md text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-[#6320ee]"
+                          autoFocus
+                        />
+                        <button
+                          onClick={() => handleSaveTitle(video.id)}
+                          disabled={isSavingTitle}
+                          className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded cursor-pointer"
+                          title="Save Title"
+                        >
+                          {isSavingTitle ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                          )}
+                        </button>
+                        <button
+                          onClick={handleCancelEdit}
+                          className="p-1 text-slate-400 hover:text-slate-600 rounded cursor-pointer"
+                          title="Cancel"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between gap-2">
+                        <h4 className="text-sm font-bold text-slate-900 dark:text-white truncate" title={video.title}>
+                          {video.title}
+                        </h4>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            onClick={() => handleStartEdit(video)}
+                            className="p-1 text-slate-400 hover:text-[#6320ee] dark:hover:text-[#a855f7] rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                            title="Edit Title"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => setVideoToDelete(video)}
+                            className="p-1 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
+                            title="Delete Video"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* YouTube Nonstop Streaming Status */}
+                    {isProcessing ? (
+                      <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400 font-medium">
+                        <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                        <span>Converting for YouTube nonstop streaming...</span>
+                      </div>
+                    ) : isFailed ? (
+                      <div className="flex items-center justify-between text-xs text-red-600 dark:text-red-400 font-medium">
+                        <span>Conversion failed</span>
+                        <button
+                          onClick={() => handleReprocess(video.id)}
+                          className="underline hover:text-red-700 cursor-pointer flex items-center gap-1"
+                        >
+                          <RotateCw className="w-3 h-3" /> Retry
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                        <span>Converted to YouTube suitable nonstop streaming</span>
+                      </div>
+                    )}
+
+                    {/* Metadata line */}
+                    <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                      <span>{video.resolution || '1080p'}</span>
+                      <span>·</span>
+                      <span>{video.sizeFormatted || '0 MB'}</span>
+                      <span>·</span>
+                      <span>{video.createdAt || 'Added'}</span>
+                    </div>
+
+                    <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                      <button
+                        onClick={() => setPreviewVideo(video)}
+                        className="text-xs font-semibold text-[#6320ee] dark:text-[#a855f7] hover:underline cursor-pointer"
+                      >
+                        Preview Video
+                      </button>
+                      <button
+                        onClick={() => setVideoToDelete(video)}
+                        className="text-xs text-slate-400 hover:text-red-600 transition-colors cursor-pointer"
+                      >
+                        Remove
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
