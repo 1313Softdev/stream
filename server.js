@@ -2117,9 +2117,12 @@ function spawnFfmpegForSession(session) {
     fps,
     audioBitrateKbps
   } = session;
-  const bitrateNum = targetBitrateKbps || 2500;
-  const fpsNum = fps === 60 ? 60 : 30;
-  const audioBitrateNum = audioBitrateKbps || 128;
+  const rawBitrate = Number(targetBitrateKbps);
+  const bitrateNum = rawBitrate > 0 && !isNaN(rawBitrate) ? rawBitrate : 2500;
+  const rawFps = Number(fps);
+  const fpsNum = rawFps === 60 ? 60 : 30;
+  const rawAudio = Number(audioBitrateKbps);
+  const audioBitrateNum = rawAudio > 0 && !isNaN(rawAudio) ? rawAudio : 128;
   const gopSize = fpsNum * 2;
   const videoBitrateStr = `${bitrateNum}k`;
   const audioBitrateStr = `${audioBitrateNum}k`;
@@ -2161,7 +2164,7 @@ function spawnFfmpegForSession(session) {
       "-i",
       resolvedVideo,
       "-vf",
-      "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+      "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1",
       "-c:v",
       "libx264",
       "-preset",
@@ -2170,14 +2173,10 @@ function spawnFfmpegForSession(session) {
       "zerolatency",
       "-b:v",
       videoBitrateStr,
-      "-minrate",
-      videoBitrateStr,
       "-maxrate",
       videoBitrateStr,
       "-bufsize",
       `${bitrateNum * 2}k`,
-      "-x264-params",
-      "nal-hrd=cbr:force-cfr=1",
       "-pix_fmt",
       "yuv420p",
       "-r",
@@ -2216,7 +2215,7 @@ function spawnFfmpegForSession(session) {
       "-i",
       "anullsrc=channel_layout=stereo:sample_rate=44100",
       "-vf",
-      "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+      "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1",
       "-c:v",
       "libx264",
       "-preset",
@@ -2225,14 +2224,10 @@ function spawnFfmpegForSession(session) {
       "zerolatency",
       "-b:v",
       videoBitrateStr,
-      "-minrate",
-      videoBitrateStr,
       "-maxrate",
       videoBitrateStr,
       "-bufsize",
       `${bitrateNum * 2}k`,
-      "-x264-params",
-      "nal-hrd=cbr:force-cfr=1",
       "-pix_fmt",
       "yuv420p",
       "-r",
@@ -3025,7 +3020,7 @@ async function processVideoForYouTubeStreaming(videoId) {
         "-i",
         "anullsrc=channel_layout=stereo:sample_rate=44100",
         "-vf",
-        "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+        "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1",
         "-c:v",
         "libx264",
         "-preset",
@@ -3052,7 +3047,7 @@ async function processVideoForYouTubeStreaming(videoId) {
     } else {
       ffmpegArgs.push(
         "-vf",
-        "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+        "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1",
         "-c:v",
         "libx264",
         "-preset",

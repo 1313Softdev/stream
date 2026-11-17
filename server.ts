@@ -401,9 +401,12 @@ function spawnFfmpegForSession(session: StreamSession): void {
     audioBitrateKbps,
   } = session;
 
-  const bitrateNum = targetBitrateKbps || 2500;
-  const fpsNum = fps === 60 ? 60 : 30;
-  const audioBitrateNum = audioBitrateKbps || 128;
+  const rawBitrate = Number(targetBitrateKbps);
+  const bitrateNum = (rawBitrate > 0 && !isNaN(rawBitrate)) ? rawBitrate : 2500;
+  const rawFps = Number(fps);
+  const fpsNum = rawFps === 60 ? 60 : 30;
+  const rawAudio = Number(audioBitrateKbps);
+  const audioBitrateNum = (rawAudio > 0 && !isNaN(rawAudio)) ? rawAudio : 128;
   const gopSize = fpsNum * 2;
   const videoBitrateStr = `${bitrateNum}k`;
   const audioBitrateStr = `${audioBitrateNum}k`;
@@ -445,15 +448,13 @@ function spawnFfmpegForSession(session: StreamSession): void {
       '-fflags', '+genpts+discardcorrupt',
       '-avoid_negative_ts', 'make_zero',
       '-i', resolvedVideo,
-      '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+      '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1',
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-tune', 'zerolatency',
       '-b:v', videoBitrateStr,
-      '-minrate', videoBitrateStr,
       '-maxrate', videoBitrateStr,
       '-bufsize', `${bitrateNum * 2}k`,
-      '-x264-params', 'nal-hrd=cbr:force-cfr=1',
       '-pix_fmt', 'yuv420p',
       '-r', String(fpsNum),
       '-g', String(gopSize),
@@ -475,15 +476,13 @@ function spawnFfmpegForSession(session: StreamSession): void {
       '-i', resolvedVideo,
       '-f', 'lavfi',
       '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
-      '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+      '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1',
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-tune', 'zerolatency',
       '-b:v', videoBitrateStr,
-      '-minrate', videoBitrateStr,
       '-maxrate', videoBitrateStr,
       '-bufsize', `${bitrateNum * 2}k`,
-      '-x264-params', 'nal-hrd=cbr:force-cfr=1',
       '-pix_fmt', 'yuv420p',
       '-r', String(fpsNum),
       '-g', String(gopSize),
@@ -1416,7 +1415,7 @@ async function processVideoForYouTubeStreaming(videoId: string): Promise<void> {
       ffmpegArgs.push(
         '-f', 'lavfi',
         '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
-        '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+        '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1',
         '-c:v', 'libx264',
         '-preset', 'veryfast',
         '-pix_fmt', 'yuv420p',
@@ -1432,7 +1431,7 @@ async function processVideoForYouTubeStreaming(videoId: string): Promise<void> {
       );
     } else {
       ffmpegArgs.push(
-        '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+        '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1',
         '-c:v', 'libx264',
         '-preset', 'veryfast',
         '-pix_fmt', 'yuv420p',
