@@ -1300,6 +1300,7 @@ export default function App() {
                 onNavigateToSlots={() => setCurrentView('live-slots')}
                 onSelectSlot={handleSelectSlot}
                 onApproveSlot={handleApproveSlotFromAdmin}
+                onDeleteSlot={handleDeleteSlot}
                 onPlansChange={(newPlans) => {
                   setPlans(newPlans);
                   localStorage.setItem('streamadda_plans', JSON.stringify(newPlans));

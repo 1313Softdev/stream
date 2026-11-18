@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Users,
   User,
@@ -70,6 +70,8 @@ import {
   importGDriveVideo,
   testGDriveConnection,
   getYouTubeVideoId,
+  deleteExpiredSlotsAdmin,
+  deleteSlotAdmin,
 } from '../lib/api';
 
 type AdminTab =
@@ -92,6 +94,7 @@ interface AdminDashboardViewProps {
   onSelectSlot?: (slotOrId: Slot | string) => void;
   onApproveSlot?: (slotId: string, planId?: string) => void;
   onPlansChange?: (plans: SubscriptionPlanItem[]) => void;
+  onDeleteSlot?: (slotId: string) => void;
 }
 
 export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
@@ -102,6 +105,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onSelectSlot,
   onApproveSlot,
   onPlansChange,
+  onDeleteSlot,
 }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [isLoading, setIsLoading] = useState(false);
@@ -137,8 +141,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     home_live_video_subtitle: 'Stream LIVE',
     home_live_video_badge: 'LIVE 1.5K VIEWERS',
     home_live_video_poster: '',
+    auto_delete_expired_slots: 'true',
+    auto_delete_grace_days: '15',
   });
   const [previewPlaying, setPreviewPlaying] = useState(false);
+  const [slotFilter, setSlotFilter] = useState<'all' | 'live' | 'expired' | 'active'>('all');
+  const [isSavingAutoDelete, setIsSavingAutoDelete] = useState(false);
+  const [isPurgingExpired, setIsPurgingExpired] = useState(false);
 
   // 3. Plans State
   const [plans, setPlans] = useState<SubscriptionPlanItem[]>([]);
@@ -430,6 +439,108 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const pendingTransactionsCount = transactions.filter((t) => t.status === 'pending').length;
   const activeStreamsCount = slots.filter((s) => s.streamStatus === 'Live').length;
 
+  // Expired Slots Calculation
+  const isAutoDeleteOn = settings.auto_delete_expired_slots !== 'false';
+  const autoDeleteGraceDays = settings.auto_delete_grace_days || '15';
+
+  const expiredSlots = useMemo(() => {
+    const now = Date.now();
+    return slots.filter((s) => {
+      let expiresAtMs = s.expiresAt && s.expiresAt > 0 ? s.expiresAt : 0;
+      if (!expiresAtMs && s.expireOn) {
+        const parsed = Date.parse(s.expireOn.replace('-', ' '));
+        if (!isNaN(parsed) && parsed > 0) expiresAtMs = parsed;
+      }
+      return s.status === 'expired' || (expiresAtMs > 0 && expiresAtMs <= now);
+    });
+  }, [slots]);
+
+  const filteredSlots = useMemo(() => {
+    const now = Date.now();
+    return slots.filter((s) => {
+      let expiresAtMs = s.expiresAt && s.expiresAt > 0 ? s.expiresAt : 0;
+      if (!expiresAtMs && s.expireOn) {
+        const parsed = Date.parse(s.expireOn.replace('-', ' '));
+        if (!isNaN(parsed) && parsed > 0) expiresAtMs = parsed;
+      }
+      const isExpired = s.status === 'expired' || (expiresAtMs > 0 && expiresAtMs <= now);
+
+      if (slotFilter === 'live') return s.streamStatus === 'Live';
+      if (slotFilter === 'expired') return isExpired;
+      if (slotFilter === 'active') return !isExpired && s.status === 'active';
+      return true;
+    });
+  }, [slots, slotFilter]);
+
+  // Expired Slots Control Handlers
+  const handleToggleAutoDelete = async (enabled: boolean) => {
+    try {
+      setIsSavingAutoDelete(true);
+      const updatedSettings: SiteMetaSettings = {
+        ...settings,
+        auto_delete_expired_slots: enabled ? 'true' : 'false',
+      };
+      setSettings(updatedSettings);
+      await saveAdminSettings(updatedSettings);
+      showToast(`Expired slots auto-deletion is now ${enabled ? 'ENABLED (ON)' : 'DISABLED (OFF)'}.`);
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to update auto-delete setting');
+    } finally {
+      setIsSavingAutoDelete(false);
+    }
+  };
+
+  const handleGraceDaysChange = async (days: string) => {
+    try {
+      setIsSavingAutoDelete(true);
+      const updatedSettings: SiteMetaSettings = {
+        ...settings,
+        auto_delete_grace_days: days,
+      };
+      setSettings(updatedSettings);
+      await saveAdminSettings(updatedSettings);
+      showToast(`Expired slot auto-delete grace period set to ${days === '0' ? 'Immediate' : `${days} days`}.`);
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to update grace period');
+    } finally {
+      setIsSavingAutoDelete(false);
+    }
+  };
+
+  const handlePurgeAllExpiredSlots = async () => {
+    if (expiredSlots.length === 0) return;
+    const confirmMsg = `Are you sure you want to permanently delete all ${expiredSlots.length} expired slot(s) across all users?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      setIsPurgingExpired(true);
+      const result = await deleteExpiredSlotsAdmin();
+      showToast(`Successfully purged ${result.count || expiredSlots.length} expired slot(s).`);
+      if (onDeleteSlot && result.ids) {
+        result.ids.forEach((id) => onDeleteSlot(id));
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to purge expired slots');
+    } finally {
+      setIsPurgingExpired(false);
+    }
+  };
+
+  const handleDeleteSingleSlot = async (slotId: string, slotName: string) => {
+    const confirmMsg = `Are you sure you want to permanently delete slot "${slotName}" (ID: ${slotId})?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      await deleteSlotAdmin(slotId);
+      if (onDeleteSlot) {
+        onDeleteSlot(slotId);
+      }
+      showToast(`Slot "${slotName}" deleted successfully.`);
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to delete slot');
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col gap-8">
       {/* Toast Notification */}
@@ -631,6 +742,11 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
                   {slots.length} Total ({activeStreamsCount} Live)
                 </span>
+                {expiredSlots.length > 0 && (
+                  <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800">
+                    {expiredSlots.length} Expired
+                  </span>
+                )}
               </h3>
               <p className="text-xs text-slate-500">
                 Monitor and control all streaming slots across the entire platform.
@@ -645,6 +761,151 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 <span>Open Full Live Slots Studio &rarr;</span>
               </button>
             )}
+          </div>
+
+          {/* Master Expired Slots Auto-Delete Control Panel */}
+          <div className="p-5 rounded-2xl bg-gradient-to-r from-red-50/80 via-purple-50/50 to-slate-50 dark:from-red-950/30 dark:via-purple-950/20 dark:to-slate-900 border border-red-200 dark:border-red-900/50 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-5">
+            <div className="flex items-start gap-3.5">
+              <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-xs ${
+                isAutoDeleteOn
+                  ? 'bg-red-500 text-white'
+                  : 'bg-slate-200 dark:bg-slate-800 text-slate-500'
+              }`}>
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Expired Slots Auto-Delete Control
+                  </h4>
+                  <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-extrabold uppercase tracking-wider ${
+                    isAutoDeleteOn
+                      ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300 border border-red-300 dark:border-red-800'
+                      : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-300 dark:border-slate-700'
+                  }`}>
+                    {isAutoDeleteOn ? 'Auto-Delete: ON' : 'Auto-Delete: OFF'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 max-w-xl">
+                  {isAutoDeleteOn
+                    ? `Active: All users' expired slots are automatically deleted after ${autoDeleteGraceDays === '0' ? 'immediate expiration (0 days)' : `${autoDeleteGraceDays} days grace period`}.`
+                    : "Disabled: All users' expired slots are permanently preserved until manually removed by Admin."}
+                </p>
+                {expiredSlots.length > 0 && (
+                  <div className="text-[11px] text-red-600 dark:text-red-400 font-bold mt-1.5 flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    <span>{expiredSlots.length} expired user slot(s) currently stored on platform.</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 shrink-0">
+              {/* ON / OFF Toggle Button */}
+              <div className="flex items-center gap-2 bg-white dark:bg-slate-800/90 p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300 pl-1.5">
+                  Auto-Delete:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleToggleAutoDelete(!isAutoDeleteOn)}
+                  disabled={isSavingAutoDelete}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 ${
+                    isAutoDeleteOn
+                      ? 'bg-red-600 hover:bg-red-700 text-white'
+                      : 'bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200'
+                  }`}
+                  title="Toggle automatic deletion of expired slots on/off"
+                >
+                  <span className={`w-2 h-2 rounded-full ${isAutoDeleteOn ? 'bg-white animate-pulse' : 'bg-slate-400'}`} />
+                  <span>{isAutoDeleteOn ? 'ON' : 'OFF'}</span>
+                </button>
+              </div>
+
+              {/* Grace Period Dropdown */}
+              {isAutoDeleteOn && (
+                <div className="flex items-center gap-1.5 bg-white dark:bg-slate-800/90 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs text-xs">
+                  <Clock className="w-3.5 h-3.5 text-slate-400" />
+                  <span className="text-slate-500 font-medium">Grace Period:</span>
+                  <select
+                    value={autoDeleteGraceDays}
+                    onChange={(e) => handleGraceDaysChange(e.target.value)}
+                    disabled={isSavingAutoDelete}
+                    className="bg-transparent font-bold text-slate-800 dark:text-white outline-none cursor-pointer text-xs"
+                  >
+                    <option value="0">0 Days (Immediate)</option>
+                    <option value="3">3 Days</option>
+                    <option value="7">7 Days</option>
+                    <option value="15">15 Days (Default)</option>
+                    <option value="30">30 Days</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Instant Delete All Expired Button */}
+              {expiredSlots.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handlePurgeAllExpiredSlots}
+                  disabled={isPurgingExpired}
+                  className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 active:scale-95 text-white text-xs font-bold transition-all shadow-md flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  title="Instantly delete all expired slots across all users"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>{isPurgingExpired ? 'Deleting...' : `Delete All Expired (${expiredSlots.length})`}</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Filter Pills */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSlotFilter('all')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                slotFilter === 'all'
+                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-xs'
+                  : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              All Slots ({slots.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setSlotFilter('live')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                slotFilter === 'live'
+                  ? 'bg-red-600 text-white shadow-xs'
+                  : 'bg-white dark:bg-slate-800 text-red-600 dark:text-red-400 border border-slate-200 dark:border-slate-700 hover:bg-red-50/50'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-current animate-pulse" />
+              <span>Live Streams ({activeStreamsCount})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSlotFilter('expired')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                slotFilter === 'expired'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'bg-white dark:bg-slate-800 text-amber-600 dark:text-amber-400 border border-slate-200 dark:border-slate-700 hover:bg-amber-50/50'
+              }`}
+            >
+              <AlertCircle className="w-3.5 h-3.5" />
+              <span>Expired Slots ({expiredSlots.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSlotFilter('active')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                slotFilter === 'active'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 border border-slate-200 dark:border-slate-700 hover:bg-emerald-50/50'
+              }`}
+            >
+              Active Valid ({slots.length - expiredSlots.length})
+            </button>
           </div>
 
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-xs">
@@ -662,113 +923,154 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
-                  {slots.length === 0 ? (
+                  {filteredSlots.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="py-12 text-center text-slate-400">
-                        No live slots found. Click "Open Full Live Slots Studio" to add or configure slots.
+                        {slotFilter === 'expired'
+                          ? 'No expired slots found. All user slots are currently active!'
+                          : slotFilter === 'live'
+                          ? 'No live streams broadcasting at the moment.'
+                          : 'No slots found.'}
                       </td>
                     </tr>
                   ) : (
-                    slots.map((s) => (
-                      <tr
-                        key={s.id}
-                        onClick={() => onSelectSlot ? onSelectSlot(s) : onNavigateToSlots?.()}
-                        className="hover:bg-purple-50/40 dark:hover:bg-slate-800/60 transition-colors cursor-pointer group"
-                        title="Click anywhere on row to open in Live Slot Studio"
-                      >
-                        <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onSelectSlot ? onSelectSlot(s) : onNavigateToSlots?.();
-                            }}
-                            className="font-bold text-slate-900 dark:text-white group-hover:text-[#6320ee] dark:group-hover:text-[#a855f7] transition-colors text-left flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <span>{s.name}</span>
-                          </button>
-                          <div className="text-[10px] text-slate-400 font-mono font-normal">ID: {s.id}</div>
-                        </td>
-                        <td className="py-3.5 px-4">
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            s.userId === currentUser.id
-                              ? 'bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
-                              : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-                          }`}>
-                            {s.userId === currentUser.id ? '★ Admin (You)' : (s.userId ? `User: ${s.userId.slice(-6)}` : 'Platform')}
-                          </span>
-                        </td>
-                        <td className="py-3.5 px-4">
-                          <div className="font-semibold text-slate-700 dark:text-slate-300">{s.platform || 'YouTube'}</div>
-                          <div className="text-[10px] text-slate-400 font-mono">
-                            {s.streamKey ? `${s.streamKey.slice(0, 4)}••••` : 'No key'}
-                          </div>
-                        </td>
-                        <td className="py-3.5 px-4">
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                            s.streamStatus === 'Live'
-                              ? 'bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400 border border-red-200 dark:border-red-800 animate-pulse'
-                              : s.streamStatus === 'Scheduled'
-                              ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400 border border-blue-200 dark:border-blue-800'
-                              : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-                          }`}>
-                            ● {s.streamStatus}
-                          </span>
-                        </td>
-                        <td className="py-3.5 px-4">
-                          {s.status === 'expired' ? (
-                            <div className="flex flex-col gap-0.5 items-start">
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/50 dark:text-red-400 dark:border-red-800">
-                                expired
-                              </span>
-                              {s.expiresAt ? (
-                                <span className="text-[9px] text-amber-600 dark:text-amber-400 font-mono">
-                                  Purge in {Math.max(1, 15 - Math.floor((Date.now() - s.expiresAt) / (24 * 3600 * 1000)))}d
-                                </span>
-                              ) : null}
-                            </div>
-                          ) : (
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                              s.status === 'active'
-                                ? 'bg-emerald-50 text-emerald-600 border border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-800'
-                                : s.status === 'pending_approval'
-                                ? 'bg-amber-50 text-amber-600 border border-amber-200 dark:bg-amber-950/50 dark:text-amber-400 dark:border-amber-800'
-                                : 'bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/50 dark:text-red-400 dark:border-red-800'
+                    filteredSlots.map((s) => {
+                      const now = Date.now();
+                      let sExpiresAtMs = s.expiresAt && s.expiresAt > 0 ? s.expiresAt : 0;
+                      if (!sExpiresAtMs && s.expireOn) {
+                        const parsed = Date.parse(s.expireOn.replace('-', ' '));
+                        if (!isNaN(parsed) && parsed > 0) sExpiresAtMs = parsed;
+                      }
+                      const sIsExpired = s.status === 'expired' || (sExpiresAtMs > 0 && sExpiresAtMs <= now);
+                      const graceDaysNum = Math.max(0, parseInt(autoDeleteGraceDays, 10));
+                      const daysRemaining = sExpiresAtMs > 0
+                        ? Math.max(0, graceDaysNum - Math.floor((now - sExpiresAtMs) / (24 * 3600 * 1000)))
+                        : graceDaysNum;
+
+                      return (
+                        <tr
+                          key={s.id}
+                          onClick={() => onSelectSlot ? onSelectSlot(s) : onNavigateToSlots?.()}
+                          className={`hover:bg-purple-50/40 dark:hover:bg-slate-800/60 transition-colors cursor-pointer group ${
+                            sIsExpired ? 'bg-red-50/20 dark:bg-red-950/10' : ''
+                          }`}
+                          title="Click anywhere on row to open in Live Slot Studio"
+                        >
+                          <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSelectSlot ? onSelectSlot(s) : onNavigateToSlots?.();
+                              }}
+                              className="font-bold text-slate-900 dark:text-white group-hover:text-[#6320ee] dark:group-hover:text-[#a855f7] transition-colors text-left flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <span>{s.name}</span>
+                            </button>
+                            <div className="text-[10px] text-slate-400 font-mono font-normal">ID: {s.id}</div>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              s.userId === currentUser.id
+                                ? 'bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
                             }`}>
-                              {s.status}
+                              {s.userId === currentUser.id ? '★ Admin (You)' : (s.userId ? `User: ${s.userId.slice(-6)}` : 'Platform')}
                             </span>
-                          )}
-                        </td>
-                        <td className="py-3.5 px-4 text-slate-500 font-mono text-[11px]">
-                          {s.status === 'expired' ? (
-                            <div>
-                              <div className="line-through text-red-400/80">{s.expireOn || 'Expired'}</div>
-                              {s.expiresAt && (
-                                <div className="text-[10px] text-slate-400 font-sans">
-                                  Auto-delete in {Math.max(1, 15 - Math.floor((Date.now() - s.expiresAt) / (24 * 3600 * 1000)))}d
-                                </div>
-                              )}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <div className="font-semibold text-slate-700 dark:text-slate-300">{s.platform || 'YouTube'}</div>
+                            <div className="text-[10px] text-slate-400 font-mono">
+                              {s.streamKey ? `${s.streamKey.slice(0, 4)}••••` : 'No key'}
                             </div>
-                          ) : (
-                            s.expireOn || 'Never'
-                          )}
-                        </td>
-                        <td className="py-3.5 px-4 text-right">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onSelectSlot ? onSelectSlot(s) : onNavigateToSlots?.();
-                            }}
-                            className="px-3 py-1.5 rounded-lg bg-purple-50 dark:bg-purple-950/60 hover:bg-[#6320ee] hover:text-white text-xs font-bold text-[#6320ee] dark:text-[#a855f7] transition-all flex items-center gap-1.5 ml-auto cursor-pointer shadow-2xs"
-                            title="Open slot in Live Studio"
-                          >
-                            <Radio className="w-3.5 h-3.5" />
-                            <span>Open Studio &rarr;</span>
-                          </button>
-                        </td>
-                      </tr>
-                    ))
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                              s.streamStatus === 'Live'
+                                ? 'bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400 border border-red-200 dark:border-red-800 animate-pulse'
+                                : s.streamStatus === 'Scheduled'
+                                ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400 border border-blue-200 dark:border-blue-800'
+                                : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                            }`}>
+                              ● {s.streamStatus}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            {sIsExpired ? (
+                              <div className="flex flex-col gap-0.5 items-start">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/50 dark:text-red-400 dark:border-red-800">
+                                  expired
+                                </span>
+                                {isAutoDeleteOn ? (
+                                  <span className="text-[9px] text-amber-600 dark:text-amber-400 font-mono">
+                                    {graceDaysNum === 0 ? 'Immediate purge' : `Purge in ${Math.max(1, daysRemaining)}d`}
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] text-slate-400 font-mono">
+                                    Preserved (Auto-delete OFF)
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                s.status === 'active'
+                                  ? 'bg-emerald-50 text-emerald-600 border border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-800'
+                                  : s.status === 'pending_approval'
+                                  ? 'bg-amber-50 text-amber-600 border border-amber-200 dark:bg-amber-950/50 dark:text-amber-400 dark:border-amber-800'
+                                  : 'bg-red-50 text-red-600 border border-red-200 dark:bg-red-950/50 dark:text-red-400 dark:border-red-800'
+                              }`}>
+                                {s.status}
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4 text-slate-500 font-mono text-[11px]">
+                            {sIsExpired ? (
+                              <div>
+                                <div className="line-through text-red-400/80">{s.expireOn || 'Expired'}</div>
+                                {isAutoDeleteOn ? (
+                                  <div className="text-[10px] text-slate-400 font-sans">
+                                    {graceDaysNum === 0 ? 'Purges immediately' : `Auto-deletes in ${Math.max(1, daysRemaining)}d`}
+                                  </div>
+                                ) : (
+                                  <div className="text-[10px] text-slate-400 font-sans">
+                                    Auto-delete disabled
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              s.expireOn || 'Never'
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onSelectSlot ? onSelectSlot(s) : onNavigateToSlots?.();
+                                }}
+                                className="px-3 py-1.5 rounded-lg bg-purple-50 dark:bg-purple-950/60 hover:bg-[#6320ee] hover:text-white text-xs font-bold text-[#6320ee] dark:text-[#a855f7] transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                                title="Open slot in Live Studio"
+                              >
+                                <Radio className="w-3.5 h-3.5" />
+                                <span>Open Studio &rarr;</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteSingleSlot(s.id, s.name);
+                                }}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors cursor-pointer"
+                                title={sIsExpired ? 'Delete expired slot permanently' : 'Delete slot permanently'}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>

@@ -270,6 +270,25 @@ export async function saveAdminSettings(settings: SiteMetaSettings): Promise<Sit
   return data.settings;
 }
 
+export async function deleteExpiredSlotsAdmin(): Promise<{ success: boolean; count: number; ids: string[] }> {
+  const res = await fetch('/api/admin/slots/expired', {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function deleteSlotAdmin(slotId: string): Promise<boolean> {
+  const res = await fetch(`/api/admin/slots/${slotId}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return data.success;
+}
+
 // 2. User Management
 export async function fetchAdminUsers(): Promise<UserProfile[]> {
   const res = await fetch('/api/admin/users', {

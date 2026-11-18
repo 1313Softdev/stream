@@ -159,6 +159,9 @@ export interface SiteMetaSettings {
   home_live_video_subtitle?: string;
   home_live_video_badge?: string;
   home_live_video_poster?: string;
+  // Expired Slots Control
+  auto_delete_expired_slots?: string;
+  auto_delete_grace_days?: string;
 }
 
 export interface GoogleDriveItem {

@@ -812,11 +812,14 @@ app.post('/api/stream/stop', async (req, res) => {
 });
 
 // Background Watchdog: Auto-detect slot expiration, terminate active live streams immediately,
-// and auto-delete expired slots after 15 days if not used/renewed by user.
-const FIFTEEN_DAYS_MS = 15 * 24 * 60 * 60 * 1000;
-
+// and auto-delete expired slots (controlled by Admin Panel ON/OFF toggle and grace period).
 setInterval(async () => {
   try {
+    const settings = await getSettings().catch(() => ({} as Record<string, string>));
+    const autoDeleteEnabled = settings.auto_delete_expired_slots !== 'false';
+    const graceDays = Math.max(0, parseInt(settings.auto_delete_grace_days || '15', 10));
+    const graceMs = graceDays * 24 * 60 * 60 * 1000;
+
     const allSlots = await getSlots();
     const now = Date.now();
     for (const slot of allSlots) {
@@ -839,9 +842,9 @@ setInterval(async () => {
           activeStreams.delete(slot.id);
         }
 
-        // Auto-delete expired slot after 15 days if not renewed / used by user
-        if (expiresAtMs > 0 && (now - expiresAtMs >= FIFTEEN_DAYS_MS)) {
-          console.log(`[Watchdog] Slot ${slot.id} ("${slot.name}") expired over 15 days ago (${new Date(expiresAtMs).toISOString()}). Auto-deleting.`);
+        // Auto-delete expired slot after grace period if auto-delete is turned ON in Admin Panel
+        if (autoDeleteEnabled && expiresAtMs > 0 && (now - expiresAtMs >= graceMs)) {
+          console.log(`[Watchdog] Slot ${slot.id} ("${slot.name}") expired over ${graceDays} days ago. Auto-deleting (Admin setting: ON).`);
           await deleteSlot(slot.id).catch((e) => console.error('[Watchdog] Failed to auto-delete slot:', e));
           continue;
         }
@@ -1773,6 +1776,62 @@ app.post('/api/admin/settings', async (req, res) => {
     res.json({ success: true, settings: updated });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err?.message || 'Failed to save settings' });
+  }
+});
+
+// Admin Slot Control: Delete all expired slots across all users
+app.delete('/api/admin/slots/expired', async (_req, res) => {
+  try {
+    const allSlots = await getSlots();
+    const now = Date.now();
+    let deletedCount = 0;
+    const deletedIds: string[] = [];
+
+    for (const slot of allSlots) {
+      let expiresAtMs = slot.expiresAt && slot.expiresAt > 0 ? slot.expiresAt : 0;
+      if (!expiresAtMs && slot.expireOn) {
+        const parsed = Date.parse(slot.expireOn.replace('-', ' '));
+        if (!isNaN(parsed) && parsed > 0) expiresAtMs = parsed;
+      }
+      const isExpired = slot.status === 'expired' || (expiresAtMs > 0 && expiresAtMs <= now);
+      if (isExpired) {
+        const session = activeStreams.get(slot.id);
+        if (session) {
+          try {
+            session.process?.removeAllListeners();
+            session.process?.kill('SIGKILL');
+          } catch {}
+          activeStreams.delete(slot.id);
+        }
+        await deleteSlot(slot.id);
+        deletedCount++;
+        deletedIds.push(slot.id);
+      }
+    }
+    console.log(`[Admin] Purged ${deletedCount} expired slot(s) across all users.`);
+    res.json({ success: true, count: deletedCount, ids: deletedIds });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Failed to delete expired slots' });
+  }
+});
+
+// Admin Slot Control: Delete any specific slot
+app.delete('/api/admin/slots/:id', async (req, res) => {
+  try {
+    const slotId = req.params.id;
+    const session = activeStreams.get(slotId);
+    if (session) {
+      try {
+        session.process?.removeAllListeners();
+        session.process?.kill('SIGKILL');
+      } catch {}
+      activeStreams.delete(slotId);
+    }
+    await deleteSlot(slotId);
+    console.log(`[Admin] Deleted slot ${slotId}.`);
+    res.json({ success: true, id: slotId });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Failed to delete slot' });
   }
 });
 

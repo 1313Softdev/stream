@@ -940,7 +940,9 @@ async function getSettings() {
     home_live_video_title: "How To Setup Youtube 24x7 Livestream",
     home_live_video_subtitle: "Stream LIVE",
     home_live_video_badge: "LIVE 1.5K VIEWERS",
-    home_live_video_poster: ""
+    home_live_video_poster: "",
+    auto_delete_expired_slots: "true",
+    auto_delete_grace_days: "15"
   };
   if (pool && isConnected) {
     try {
@@ -2501,9 +2503,12 @@ app.post("/api/stream/stop", async (req, res) => {
   }
   return res.json({ success: true, message: "Stream stopped successfully" });
 });
-var FIFTEEN_DAYS_MS = 15 * 24 * 60 * 60 * 1e3;
 setInterval(async () => {
   try {
+    const settings = await getSettings().catch(() => ({}));
+    const autoDeleteEnabled = settings.auto_delete_expired_slots !== "false";
+    const graceDays = Math.max(0, parseInt(settings.auto_delete_grace_days || "15", 10));
+    const graceMs = graceDays * 24 * 60 * 60 * 1e3;
     const allSlots = await getSlots();
     const now = Date.now();
     for (const slot of allSlots) {
@@ -2524,8 +2529,8 @@ setInterval(async () => {
           session.status = "stopped";
           activeStreams.delete(slot.id);
         }
-        if (expiresAtMs > 0 && now - expiresAtMs >= FIFTEEN_DAYS_MS) {
-          console.log(`[Watchdog] Slot ${slot.id} ("${slot.name}") expired over 15 days ago (${new Date(expiresAtMs).toISOString()}). Auto-deleting.`);
+        if (autoDeleteEnabled && expiresAtMs > 0 && now - expiresAtMs >= graceMs) {
+          console.log(`[Watchdog] Slot ${slot.id} ("${slot.name}") expired over ${graceDays} days ago. Auto-deleting (Admin setting: ON).`);
           await deleteSlot(slot.id).catch((e) => console.error("[Watchdog] Failed to auto-delete slot:", e));
           continue;
         }
@@ -3363,6 +3368,59 @@ app.post("/api/admin/settings", async (req, res) => {
     res.json({ success: true, settings: updated });
   } catch (err) {
     res.status(500).json({ success: false, error: err?.message || "Failed to save settings" });
+  }
+});
+app.delete("/api/admin/slots/expired", async (_req, res) => {
+  try {
+    const allSlots = await getSlots();
+    const now = Date.now();
+    let deletedCount = 0;
+    const deletedIds = [];
+    for (const slot of allSlots) {
+      let expiresAtMs = slot.expiresAt && slot.expiresAt > 0 ? slot.expiresAt : 0;
+      if (!expiresAtMs && slot.expireOn) {
+        const parsed = Date.parse(slot.expireOn.replace("-", " "));
+        if (!isNaN(parsed) && parsed > 0) expiresAtMs = parsed;
+      }
+      const isExpired = slot.status === "expired" || expiresAtMs > 0 && expiresAtMs <= now;
+      if (isExpired) {
+        const session = activeStreams.get(slot.id);
+        if (session) {
+          try {
+            session.process?.removeAllListeners();
+            session.process?.kill("SIGKILL");
+          } catch {
+          }
+          activeStreams.delete(slot.id);
+        }
+        await deleteSlot(slot.id);
+        deletedCount++;
+        deletedIds.push(slot.id);
+      }
+    }
+    console.log(`[Admin] Purged ${deletedCount} expired slot(s) across all users.`);
+    res.json({ success: true, count: deletedCount, ids: deletedIds });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err?.message || "Failed to delete expired slots" });
+  }
+});
+app.delete("/api/admin/slots/:id", async (req, res) => {
+  try {
+    const slotId = req.params.id;
+    const session = activeStreams.get(slotId);
+    if (session) {
+      try {
+        session.process?.removeAllListeners();
+        session.process?.kill("SIGKILL");
+      } catch {
+      }
+      activeStreams.delete(slotId);
+    }
+    await deleteSlot(slotId);
+    console.log(`[Admin] Deleted slot ${slotId}.`);
+    res.json({ success: true, id: slotId });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err?.message || "Failed to delete slot" });
   }
 });
 app.get("/api/admin/users", async (_req, res) => {

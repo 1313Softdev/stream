@@ -1037,6 +1037,8 @@ export async function getSettings(): Promise<Record<string, string>> {
     home_live_video_subtitle: 'Stream LIVE',
     home_live_video_badge: 'LIVE 1.5K VIEWERS',
     home_live_video_poster: '',
+    auto_delete_expired_slots: 'true',
+    auto_delete_grace_days: '15',
   };
 
   if (pool && isConnected) {
