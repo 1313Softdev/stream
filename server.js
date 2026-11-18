@@ -2047,10 +2047,19 @@ app.post("/api/stream/start", async (req, res) => {
   const existing = activeStreams.get(slotId);
   if (existing) {
     existing.userRequestedStop = true;
-    if (existing.reconnectTimer) clearTimeout(existing.reconnectTimer);
-    try {
-      existing.process.kill("SIGTERM");
-    } catch {
+    if (existing.reconnectTimer) {
+      clearTimeout(existing.reconnectTimer);
+      existing.reconnectTimer = void 0;
+    }
+    if (existing.process) {
+      try {
+        existing.process.removeAllListeners("close");
+        existing.process.removeAllListeners("error");
+        existing.process.stderr?.removeAllListeners();
+        existing.process.stdout?.removeAllListeners();
+        existing.process.kill("SIGKILL");
+      } catch {
+      }
     }
     activeStreams.delete(slotId);
   }
@@ -2107,6 +2116,18 @@ function spawnFfmpegForSession(session) {
     session.reconnectTimer = void 0;
   }
   if (session.userRequestedStop) return;
+  if (session.process) {
+    const oldProc = session.process;
+    session.process = null;
+    try {
+      oldProc.removeAllListeners("close");
+      oldProc.removeAllListeners("error");
+      oldProc.stderr?.removeAllListeners();
+      oldProc.stdout?.removeAllListeners();
+      oldProc.kill("SIGKILL");
+    } catch {
+    }
+  }
   const {
     slotId,
     streamKey,
@@ -2154,6 +2175,10 @@ function spawnFfmpegForSession(session) {
   let ffmpegArgs;
   if (hasAudio) {
     ffmpegArgs = [
+      "-hwaccel",
+      "none",
+      "-threads",
+      "2",
       "-re",
       "-stream_loop",
       "-1",
@@ -2163,6 +2188,8 @@ function spawnFfmpegForSession(session) {
       "make_zero",
       "-i",
       resolvedVideo,
+      "-threads",
+      "2",
       "-vf",
       "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1",
       "-c:v",
@@ -2201,6 +2228,10 @@ function spawnFfmpegForSession(session) {
     ];
   } else {
     ffmpegArgs = [
+      "-hwaccel",
+      "none",
+      "-threads",
+      "2",
       "-re",
       "-stream_loop",
       "-1",
@@ -2214,6 +2245,8 @@ function spawnFfmpegForSession(session) {
       "lavfi",
       "-i",
       "anullsrc=channel_layout=stereo:sample_rate=44100",
+      "-threads",
+      "2",
       "-vf",
       "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1",
       "-c:v",
@@ -2290,7 +2323,10 @@ function spawnFfmpegForSession(session) {
         if (speedMatch) session.lastStats.speed = speedMatch[1];
         if (timeMatch) session.lastStats.time = timeMatch[1];
       }
-      if (lower.includes("error while opening encoder") || lower.includes("error initializing output stream") || lower.includes("width not divisible by 2") || lower.includes("height not divisible by 2") || lower.includes("incorrect parameters such as bit_rate")) {
+      if (lower.includes("error while opening decoder") || lower.includes("resource temporarily unavailable")) {
+        session.status = "error";
+        session.lastError = "System decoder resource error: Decoder threads were busy. Stream supervisor is auto-recovering with bounded threads.";
+      } else if (lower.includes("error while opening encoder") || lower.includes("error initializing output stream") || lower.includes("width not divisible by 2") || lower.includes("height not divisible by 2") || lower.includes("incorrect parameters such as bit_rate")) {
         session.status = "error";
         session.lastError = "Video encoder error: Video dimensions or parameters were incompatible. Please use default 720p (2500 Kbps) settings or select a standard MP4 video.";
       } else if (lower.includes("failed to resolve hostname") || lower.includes("nodename nor servname") || lower.includes("network is unreachable") || lower.includes("no route to host")) {
@@ -2309,9 +2345,13 @@ function spawnFfmpegForSession(session) {
     }
   });
   child.on("close", async (code) => {
-    console.log(`[Slot ${slotId}] FFmpeg process closed (code: ${code}). userRequestedStop: ${session.userRequestedStop}`);
+    console.log(`[Slot ${slotId}] FFmpeg process closed (PID: ${child.pid}, code: ${code}). userRequestedStop: ${session.userRequestedStop}`);
     if (activeStreams.get(slotId) !== session) {
       console.log(`[Slot ${slotId}] Ignoring close event from superseded session.`);
+      return;
+    }
+    if (session.process && session.process !== child) {
+      console.log(`[Slot ${slotId}] Ignoring close event from old child PID ${child.pid}.`);
       return;
     }
     if (session.userRequestedStop) {
@@ -2352,11 +2392,14 @@ function spawnFfmpegForSession(session) {
     session.reconnectAttempts = (session.reconnectAttempts || 0) + 1;
     session.status = "starting";
     const attempts = session.reconnectAttempts;
-    const delayMs = attempts > 15 ? 1e4 : attempts > 5 ? 5e3 : 1500;
+    const delayMs = Math.min(2e4, 2500 + attempts * 1500);
     session.logs.push(
       `[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] 24/7 video loop continuous active (reconnect #${session.reconnectAttempts}). Streaming nonstop until slot expires.`
     );
-    console.log(`[Slot ${slotId}] Auto-reconnecting stream in ${delayMs / 1e3}s (slot not expired)...`);
+    console.log(`[Slot ${slotId}] Auto-reconnecting stream in ${delayMs / 1e3}s (reconnect #${attempts})...`);
+    if (session.reconnectTimer) {
+      clearTimeout(session.reconnectTimer);
+    }
     session.reconnectTimer = setTimeout(() => {
       if (!session.userRequestedStop) {
         activeStreams.set(slotId, session);
@@ -2365,51 +2408,66 @@ function spawnFfmpegForSession(session) {
     }, delayMs);
   });
 }
+var startingSlots = /* @__PURE__ */ new Set();
 async function startSessionForSlot(slot) {
   if (!slot.streamKey) return;
+  if (startingSlots.has(slot.id)) {
+    console.log(`[Slot ${slot.id}] startSessionForSlot already in progress, skipping duplicate call.`);
+    return;
+  }
   const existing = activeStreams.get(slot.id);
-  if (existing && !existing.userRequestedStop) return;
+  if (existing && !existing.userRequestedStop && (existing.status === "live" || existing.status === "starting")) {
+    return;
+  }
   const cleanedKey = cleanStreamKey(slot.streamKey);
   if (!cleanedKey) return;
-  const bitrateNum = slot.targetBitrateKbps || 2500;
-  const fpsNum = slot.fpsPreset === 60 ? 60 : 30;
-  const audioBitrateNum = slot.audioBitrateKbps || 128;
-  const platform = slot.platform || "YouTube";
-  const customRtmpUrl = slot.rtmpServerUrl;
-  const targetUrl = getIngestUrl(platform, cleanedKey, customRtmpUrl);
-  let videoPath = "";
-  if (slot.videoId) {
-    const v = await getVideo(slot.videoId);
-    if (v) videoPath = v.videoPath || v.videoUrl;
+  startingSlots.add(slot.id);
+  try {
+    const rawBitrate = Number(slot.targetBitrateKbps);
+    const bitrateNum = rawBitrate > 0 && !isNaN(rawBitrate) ? rawBitrate : 2500;
+    const rawFps = Number(slot.fpsPreset);
+    const fpsNum = rawFps === 60 ? 60 : 30;
+    const rawAudio = Number(slot.audioBitrateKbps);
+    const audioBitrateNum = rawAudio > 0 && !isNaN(rawAudio) ? rawAudio : 128;
+    const platform = slot.platform || "YouTube";
+    const customRtmpUrl = slot.rtmpServerUrl;
+    const targetUrl = getIngestUrl(platform, cleanedKey, customRtmpUrl);
+    let videoPath = "";
+    if (slot.videoId) {
+      const v = await getVideo(slot.videoId);
+      if (v) videoPath = v.videoPath || v.videoUrl;
+    }
+    let resolvedVideo = resolveVideoFilePath(videoPath);
+    if (!resolvedVideo || !resolvedVideo.startsWith("http") && !fs2.existsSync(resolvedVideo)) {
+      resolvedVideo = path2.resolve(__dirname, "public/videos/lofi-chill.mp4");
+    }
+    const logs = [
+      `[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Resuming continuous 24/7 live stream for slot ${slot.id}`,
+      `[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Platform: ${platform} | Source: ${path2.basename(resolvedVideo)}`
+    ];
+    const session = {
+      slotId: slot.id,
+      streamKey: cleanedKey,
+      platform,
+      rtmpTarget: targetUrl,
+      videoPath: resolvedVideo,
+      customRtmpUrl,
+      targetBitrateKbps: bitrateNum,
+      fps: fpsNum,
+      audioBitrateKbps: audioBitrateNum,
+      process: null,
+      startedAt: Date.now(),
+      status: "starting",
+      logs,
+      lastStats: { fps: fpsNum, bitrate: `${bitrateNum}kbits/s`, frames: 0, speed: "0x" },
+      userRequestedStop: false,
+      reconnectAttempts: 0
+    };
+    activeStreams.set(slot.id, session);
+    spawnFfmpegForSession(session);
+  } finally {
+    startingSlots.delete(slot.id);
   }
-  let resolvedVideo = resolveVideoFilePath(videoPath);
-  if (!resolvedVideo || !resolvedVideo.startsWith("http") && !fs2.existsSync(resolvedVideo)) {
-    resolvedVideo = path2.resolve(__dirname, "public/videos/lofi-chill.mp4");
-  }
-  const logs = [
-    `[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Resuming continuous 24/7 live stream for slot ${slot.id}`,
-    `[${(/* @__PURE__ */ new Date()).toLocaleTimeString()}] Platform: ${platform} | Source: ${path2.basename(resolvedVideo)}`
-  ];
-  const session = {
-    slotId: slot.id,
-    streamKey: cleanedKey,
-    platform,
-    rtmpTarget: targetUrl,
-    videoPath: resolvedVideo,
-    customRtmpUrl,
-    targetBitrateKbps: bitrateNum,
-    fps: fpsNum,
-    audioBitrateKbps: audioBitrateNum,
-    process: null,
-    startedAt: Date.now(),
-    status: "starting",
-    logs,
-    lastStats: { fps: fpsNum, bitrate: `${bitrateNum}kbits/s`, frames: 0, speed: "0x" },
-    userRequestedStop: false,
-    reconnectAttempts: 0
-  };
-  activeStreams.set(slot.id, session);
-  spawnFfmpegForSession(session);
 }
 app.post("/api/stream/stop", async (req, res) => {
   const { slotId } = req.body;
@@ -2421,9 +2479,15 @@ app.post("/api/stream/stop", async (req, res) => {
       clearTimeout(session.reconnectTimer);
       session.reconnectTimer = void 0;
     }
-    try {
-      session.process.kill("SIGTERM");
-    } catch {
+    if (session.process) {
+      try {
+        session.process.removeAllListeners("close");
+        session.process.removeAllListeners("error");
+        session.process.stderr?.removeAllListeners();
+        session.process.stdout?.removeAllListeners();
+        session.process.kill("SIGKILL");
+      } catch {
+      }
     }
     session.status = "stopped";
     activeStreams.delete(slotId);
